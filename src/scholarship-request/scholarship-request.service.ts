@@ -72,13 +72,21 @@ export class ScholarshipRequestService {
     query: GetScholarshipRequestDto,
     user: any,
   ): Promise<PaginatedResponse<StudentOnDepartment>> {
-    const { page = 1, size = 10 } = query;
+    const { page = 1, size = 10, departmentId, status } = query;
     const { take, skip } = createPaginationMetadata(page, size);
 
     // Build where clause: non-admins only see their department
     const where: any = {};
     if (user.role.name !== 'Admin') {
       where.departmentId = user.departmentId;
+    }
+
+    if (departmentId) {
+      where.departmentId = Number(departmentId);
+    }
+
+    if (status) {
+      where.status = status;
     }
 
     const prismaQuery = {

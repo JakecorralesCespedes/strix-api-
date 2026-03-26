@@ -8,6 +8,8 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 export class PermissionsController {
   @Get()
   getPermissions() {
-    return Object.keys(Permissions).flatMap((k) => Object.keys(Permissions[k]));
+    return Object.keys(Permissions).flatMap((k) =>
+      Object.values(Permissions[k]),
+    );
   }
 }

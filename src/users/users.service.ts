@@ -15,6 +15,10 @@ import { RolesService } from '../roles/roles.service';
 
 const DEFAULT_ROLE = 2;
 
+export type UserWithRoleDepartment = Prisma.UserGetPayload<{
+  include: { role: true; department: true };
+}>;
+
 @Injectable()
 export class UsersService {
   constructor(
@@ -88,6 +92,50 @@ export class UsersService {
   }
   // fin
 
+  async createFromFirebase(
+    firebaseUser: { uid: string; email?: string | null; name?: string | null },
+    roleId: number,
+  ): Promise<UserWithRoleDepartment> {
+    const email = firebaseUser.email || 'unknown@local';
+    const existingByEmail = await this.prismaService.user.findFirst({
+      where: { email },
+      include: { role: true, department: true },
+    });
+
+    if (existingByEmail) {
+      return existingByEmail;
+    }
+
+    const role = await this.rolesService.findOne(roleId);
+
+    if (!role) {
+      throw new BadRequestException(`Role with id ${roleId} does not exist`);
+    }
+
+    const department = await this.prismaService.department.findFirst();
+
+    if (!department) {
+      throw new BadRequestException('No departments available');
+    }
+
+    await this.firebaseService.addCustomClaims(firebaseUser.uid, {
+      allowedPermissions: role.allowedPermissions,
+      roleId: role.id,
+    });
+
+    return this.prismaService.user.create({
+      data: {
+        email,
+        name: firebaseUser.name || email.split('@')[0] || 'New User',
+        phone: '',
+        uuid: firebaseUser.uid,
+        role: { connect: { id: role.id } },
+        department: { connect: { id: department.id } },
+      },
+      include: { role: true, department: true },
+    });
+  }
+
   async findAll(query: GetUsersDto): Promise<PaginatedResponse<User>> {
     const { page = 1, size = 10, search } = query;
 
@@ -141,7 +189,7 @@ export class UsersService {
       return false;
     }
   }
-  findOne(identifier: string) {
+  findOne(identifier: string): Promise<UserWithRoleDepartment | null> {
     const maybeId = Number(identifier);
     const isNumericId = Number.isInteger(maybeId) && `${maybeId}` === identifier;
 

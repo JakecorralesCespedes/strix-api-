@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
@@ -8,7 +9,7 @@ import {
   Query,
   Req,
 } from '@nestjs/common';
-import { UsersService } from './users.service';
+import { UsersService, UserWithRoleDepartment } from './users.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { User } from '@prisma/client';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
@@ -36,7 +37,9 @@ export class UsersController {
   }
 
   @Get('me')
-  async me(@Req() req: { raw: AuthenticatedRequest }): Promise<User> {
+  async me(
+    @Req() req: { raw: AuthenticatedRequest },
+  ): Promise<UserWithRoleDepartment> {
     const firebaseUser = req.raw.firebaseUser;
     let user = await this.usersService.findOne(firebaseUser.uid);
 
@@ -54,23 +57,28 @@ export class UsersController {
         }
       }
 
-      await this.usersService.create({
-        email: firebaseUser.email || 'unknown@local',
-        name: firebaseUser.name || firebaseUser.email?.split('@')[0] || 'New User',
-        phone: '',
-        password: 'firebase-managed',
+      user = await this.usersService.createFromFirebase(
+        {
+          uid: firebaseUser.uid,
+          email: firebaseUser.email,
+          name: firebaseUser.name,
+        },
         roleId,
-      });
-      // Fetch the newly created user
-      user = await this.usersService.findOne(firebaseUser.uid);
+      );
     }
 
     return user;
   }
 
   @Get(':identifier')
-  async findOne(@Param('identifier') identifier: string): Promise<User> {
-    return this.usersService.findOne(identifier);
+  async findOne(
+    @Param('identifier') identifier: string,
+  ): Promise<UserWithRoleDepartment> {
+    const user = await this.usersService.findOne(identifier);
+    if (!user) {
+      throw new BadRequestException('User not found');
+    }
+    return user;
   }
 
   @Post()

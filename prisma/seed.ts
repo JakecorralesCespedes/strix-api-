@@ -150,6 +150,19 @@ async function main() {
     'periods.write',
     'configs.read',
     'configs.write',
+    'roles.read',
+    'roles.write',
+    'permissions.read',
+    'permissions.write',
+    'pricing.read',
+    'pricing.write',
+    'scholarship.read',
+    'scholarship.write',
+    'work-hours.read',
+    'work-hours.write',
+    'time-entries.read',
+    'time-entries.write',
+    'reports.read',
   ]);
 
   const operatorRole = await ensureRole('Operator', [
@@ -157,11 +170,18 @@ async function main() {
     'departments.read',
     'periods.read',
     'configs.read',
+    'scholarship.read',
+    'work-hours.read',
+    'time-entries.read',
+    'reports.read',
   ]);
 
   const supportRole = await ensureRole('Support', [
     'users.read',
     'departments.read',
+    'scholarship.read',
+    'work-hours.read',
+    'time-entries.read',
   ]);
 
   const priceList: PriceItem[] = [
