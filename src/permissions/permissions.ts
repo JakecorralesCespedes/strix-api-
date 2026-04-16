@@ -3,6 +3,10 @@ export enum USERS {
   USERS_WRITE = 'users.write',
   USERS_DELETE = 'users.delete',
 }
+export enum STUDENTS {
+  STUDENTS_READ = 'students.read',
+  STUDENTS_WRITE = 'students.write',
+}
 export enum DEPARTMENTS {
   DEPARTMENTS_READ = 'departments.read',
   DEPARTMENTS_WRITE = 'departments.write',
@@ -58,6 +62,7 @@ export enum REPORTS {
 
 export type ADMIN =
   | USERS
+  | STUDENTS
   | ROLES
   | DEPARTMENTS
   | PERIODS

@@ -237,6 +237,8 @@ async function main() {
   const adminRole = await ensureRole('Admin', [
     'users.read',
     'users.write',
+    'students.read',
+    'students.write',
     'departments.read',
     'departments.write',
     'periods.read',
@@ -264,6 +266,8 @@ async function main() {
 
   const operatorRole = await ensureRole('Operator', [
     'users.read',
+    'students.read',
+    'students.write',
     'departments.read',
     'periods.read',
     'configs.read',
