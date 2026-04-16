@@ -47,6 +47,9 @@ export enum SCHOLARSHIP_REQUESTS {
 export enum WORK_HOURS {
   WORK_HOURS_READ = 'work-hours.read',
   WORK_HOURS_WRITE = 'work-hours.write',
+  WORK_HOURS_APPROVE = 'work-hours.approve',
+  WORK_HOURS_FINANCIALS_READ = 'work-hours.financials.read',
+  WORK_HOURS_APPLY = 'work-hours.apply',
 }
 
 export enum TIME_ENTRIES {

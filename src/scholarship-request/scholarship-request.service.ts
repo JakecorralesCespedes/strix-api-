@@ -13,10 +13,14 @@ import {
   createPaginatedResponse,
   createPaginationMetadata,
 } from '../utils/pagination.util';
+import { MailerService } from '../common/mailer.service';
 
 @Injectable()
 export class ScholarshipRequestService {
-  constructor(private readonly prismaService: PrismaService) {}
+  constructor(
+    private readonly prismaService: PrismaService,
+    private readonly mailerService: MailerService,
+  ) {}
 
   private async checkDepartmentAccess(departmentId: number, user: any) {
     if (user.role.name === 'Admin') return;
@@ -143,7 +147,9 @@ export class ScholarshipRequestService {
     const record = await this.findOne(id, user);
     await this.checkDepartmentAccess(record.departmentId, user);
 
-    return this.prismaService.studentOnDepartment.update({
+    const previousStatus = record.status;
+
+    const updated = await this.prismaService.studentOnDepartment.update({
       where: {
         id,
       },
@@ -151,5 +157,28 @@ export class ScholarshipRequestService {
         status: data.status,
       },
     });
+
+    if (data.status && data.status !== previousStatus) {
+      const studentEmail = record.student?.email;
+      if (studentEmail) {
+        const readableStatus =
+          data.status === 'APPROVED' ? 'aprobada' : 'rechazada';
+        const subject = `Solicitud de horas beca ${readableStatus}`;
+        const text = [
+          `Hola ${record.student?.name ?? 'estudiante'},`,
+          `Tu solicitud de horas beca fue ${readableStatus}.`,
+          `Departamento: ${record.department?.name ?? record.departmentId}.`,
+          `Estado: ${data.status}.`,
+        ].join('\n');
+
+        await this.mailerService.sendMail({
+          to: studentEmail,
+          subject,
+          text,
+        });
+      }
+    }
+
+    return updated;
   }
 }

@@ -9,10 +9,76 @@ import {
 import { GetWorkHoursDto } from './dto/get-work-hours.dto';
 import { CreateWorkHoursDto } from './dto/create-work-hours.dto';
 import { UpdateWorkHoursDto } from './dto/update-work-hours.dto';
+import { WORK_HOURS } from '../permissions/permissions';
+
+export type WorkHoursResponse = Omit<
+  WorkHours,
+  'amount' | 'price' | 'total'
+> & {
+  amount: number | null;
+  price: number | null;
+  total: number | null;
+};
 
 @Injectable()
 export class WorkHoursService {
   constructor(private readonly prismaService: PrismaService) {}
+
+  private hasPermission(user: any, permission: string): boolean {
+    if (user?.role?.name === 'Admin') {
+      return true;
+    }
+
+    const allowed = user?.role?.allowedPermissions ?? [];
+    return allowed.includes(permission);
+  }
+
+  private canApprove(user: any): boolean {
+    return this.hasPermission(user, WORK_HOURS.WORK_HOURS_APPROVE);
+  }
+
+  private canViewFinancials(user: any): boolean {
+    return this.hasPermission(user, WORK_HOURS.WORK_HOURS_FINANCIALS_READ);
+  }
+
+  private sanitizeWorkHours(
+    record: WorkHours,
+    canViewFinancials: boolean,
+  ): WorkHoursResponse {
+    if (canViewFinancials) {
+      return record as WorkHoursResponse;
+    }
+
+    return {
+      ...record,
+      amount: null,
+      price: null,
+      total: null,
+    } as WorkHoursResponse;
+  }
+
+  private calculateAmount(start: Date, end: Date): number {
+    const diffMs = end.getTime() - start.getTime();
+
+    if (diffMs <= 0) {
+      throw new BadRequestException('Invalid time range');
+    }
+
+    return Number((diffMs / (1000 * 60 * 60)).toFixed(2));
+  }
+
+  private normalizeDate(value: string, label: string, isEnd = false): Date {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      throw new BadRequestException(`${label} must be a valid date`);
+    }
+
+    if (isEnd) {
+      date.setHours(23, 59, 59, 999);
+    }
+
+    return date;
+  }
 
   private async checkDepartmentAccess(departmentId: number, user: any) {
     if (user.role.name === 'Admin') return;
@@ -41,8 +107,17 @@ export class WorkHoursService {
   async findAll(
     query: GetWorkHoursDto,
     user: any,
-  ): Promise<PaginatedResponse<WorkHours>> {
-    const { page = 1, size = 10, departmentId, studentId, periodId } = query;
+  ): Promise<PaginatedResponse<WorkHoursResponse>> {
+    const {
+      page = 1,
+      size = 10,
+      departmentId,
+      studentId,
+      periodId,
+      status,
+      startDate,
+      endDate,
+    } = query;
     const { take, skip } = createPaginationMetadata(page, size);
 
     // Build where clause: non-admins can only see their department's hours
@@ -63,6 +138,20 @@ export class WorkHoursService {
       where.periodId = Number(periodId);
     }
 
+    if (status) {
+      where.status = status;
+    }
+
+    if (startDate || endDate) {
+      where.start = {};
+      if (startDate) {
+        where.start.gte = this.normalizeDate(startDate, 'startDate');
+      }
+      if (endDate) {
+        where.start.lte = this.normalizeDate(endDate, 'endDate', true);
+      }
+    }
+
     const [workHours, total] = await Promise.all([
       this.prismaService.workHours.findMany({
         take,
@@ -78,10 +167,20 @@ export class WorkHoursService {
       this.prismaService.workHours.count({ where }),
     ]);
 
-    return createPaginatedResponse<WorkHours>(workHours, total, page, size);
+    const canViewFinancials = this.canViewFinancials(user);
+    const sanitized = workHours.map((item) =>
+      this.sanitizeWorkHours(item, canViewFinancials),
+    );
+
+    return createPaginatedResponse<WorkHoursResponse>(
+      sanitized,
+      total,
+      page,
+      size,
+    );
   }
 
-  async findOne(id: number, user: any): Promise<WorkHours> {
+  async findOne(id: number, user: any): Promise<WorkHoursResponse> {
     const record = await this.prismaService.workHours.findFirst({
       where: { id },
       include: {
@@ -97,10 +196,10 @@ export class WorkHoursService {
     }
 
     await this.checkDepartmentAccess(record.departmentId, user);
-    return record;
+    return this.sanitizeWorkHours(record, this.canViewFinancials(user));
   }
 
-  async create(data: CreateWorkHoursDto, user: any): Promise<WorkHours> {
+  async create(data: CreateWorkHoursDto, user: any): Promise<WorkHoursResponse> {
     await this.checkDepartmentAccess(data.departmentId, user);
 
     const department = await this.prismaService.department.findUnique({
@@ -126,17 +225,24 @@ export class WorkHoursService {
       throw new BadRequestException('Period not found');
     }
 
-    const total = data.amount * data.price;
+    const startDate = new Date(data.start);
+    const endDate = new Date(data.end);
+    const amount = this.calculateAmount(startDate, endDate);
+    const price = Number(department.pricing || 0);
+    const total = amount * price;
+    const status = this.canApprove(user)
+      ? data.status ?? WorkHoursStatus.PENDING
+      : WorkHoursStatus.PENDING;
 
-    return this.prismaService.workHours.create({
+    const created = await this.prismaService.workHours.create({
       data: {
         name: data.name,
-        start: new Date(data.start),
-        end: new Date(data.end),
-        amount: data.amount,
-        price: data.price,
+        start: startDate,
+        end: endDate,
+        amount,
+        price,
         total,
-        status: data.status ?? WorkHoursStatus.PENDING,
+        status,
         registedBy: user.id,
         studentId: data.studentId,
         departmentId: data.departmentId,
@@ -149,13 +255,15 @@ export class WorkHoursService {
         applier: true,
       },
     });
+
+    return this.sanitizeWorkHours(created, this.canViewFinancials(user));
   }
 
   async update(
     id: number,
     data: UpdateWorkHoursDto,
     user: any,
-  ): Promise<WorkHours> {
+  ): Promise<WorkHoursResponse> {
     const existing = await this.findOne(id, user);
     const nextDepartmentId = data.departmentId ?? existing.departmentId;
 
@@ -175,20 +283,32 @@ export class WorkHoursService {
       }
     }
 
-    const amount = data.amount ?? existing.amount;
-    const price = data.price ?? existing.price;
-    const total = amount * price;
+    const department = await this.prismaService.department.findUnique({
+      where: { id: nextDepartmentId },
+    });
+    if (!department) {
+      throw new BadRequestException('Department not found');
+    }
 
-    return this.prismaService.workHours.update({
+    const startDate = data.start ? new Date(data.start) : existing.start;
+    const endDate = data.end ? new Date(data.end) : existing.end;
+    const amount = this.calculateAmount(startDate, endDate);
+    const price = Number(department.pricing || 0);
+    const total = amount * price;
+    const status = this.canApprove(user)
+      ? data.status ?? existing.status
+      : existing.status;
+
+    const updated = await this.prismaService.workHours.update({
       where: { id },
       data: {
         name: data.name ?? existing.name,
-        start: data.start ? new Date(data.start) : existing.start,
-        end: data.end ? new Date(data.end) : existing.end,
+        start: startDate,
+        end: endDate,
         amount,
         price,
         total,
-        status: data.status ?? existing.status,
+        status,
         studentId: data.studentId ?? existing.studentId,
         departmentId: nextDepartmentId,
         periodId: data.periodId ?? existing.periodId,
@@ -200,5 +320,7 @@ export class WorkHoursService {
         applier: true,
       },
     });
+
+    return this.sanitizeWorkHours(updated, this.canViewFinancials(user));
   }
 }

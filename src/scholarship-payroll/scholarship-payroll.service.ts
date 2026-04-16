@@ -3,6 +3,7 @@ import { PrismaService } from '../common/prisma.service';
 import { WorkHoursStatus } from '@prisma/client';
 import { PreviewPayrollDto } from './dto/preview-payroll.dto';
 import { ApplyPayrollDto } from './dto/apply-payroll.dto';
+import { MailerService } from '../common/mailer.service';
 
 const DEFAULT_TITHE_RATE = 0.1;
 const DEFAULT_RECEIVABLE_RATE = 0;
@@ -37,7 +38,10 @@ export type PayrollPreviewTotals = {
 
 @Injectable()
 export class ScholarshipPayrollService {
-  constructor(private readonly prismaService: PrismaService) {}
+  constructor(
+    private readonly prismaService: PrismaService,
+    private readonly mailerService: MailerService,
+  ) {}
 
   private round(value: number): number {
     return Number(value.toFixed(2));
@@ -268,10 +272,112 @@ export class ScholarshipPayrollService {
       });
     }
 
+    await this.sendPayrollNotifications(applied, items, period, user);
+
     return {
       appliedCount: applied.length,
       items: applied,
       totals,
     };
+  }
+
+  private async sendPayrollNotifications(
+    applied: any[],
+    items: PayrollPreviewItem[],
+    period: any,
+    user: any,
+  ) {
+    const departmentIds = Array.from(
+      new Set(applied.map((item) => item.departmentId)),
+    );
+
+    if (!departmentIds.length) {
+      return;
+    }
+
+    const [departments, mailingList] = await Promise.all([
+      this.prismaService.department.findMany({
+        where: { id: { in: departmentIds } },
+        include: { head: true },
+      }),
+      this.prismaService.mailingList.findMany({ where: { active: true } }),
+    ]);
+
+    const mailingEmails = mailingList
+      .map((item) => item.email)
+      .filter(Boolean);
+    const departmentMap = new Map(
+      departments.map((department) => [department.id, department]),
+    );
+
+    const itemsByDepartment = new Map<number, PayrollPreviewItem[]>();
+    for (const item of items) {
+      if (!itemsByDepartment.has(item.departmentId)) {
+        itemsByDepartment.set(item.departmentId, []);
+      }
+      itemsByDepartment.get(item.departmentId)?.push(item);
+    }
+
+    for (const [departmentId, departmentItems] of itemsByDepartment.entries()) {
+      const department = departmentMap.get(departmentId);
+      const headEmail = department?.head?.email;
+      const recipients = Array.from(
+        new Set([headEmail, ...mailingEmails].filter(Boolean)),
+      );
+
+      if (!recipients.length) {
+        continue;
+      }
+
+      const headerLines = [
+        'Aplicacion de horas beca',
+        `Departamento: ${department?.name ?? departmentId}`,
+        `Periodo: ${period?.name ?? period?.id ?? ''}`,
+        `Aplicado por: ${user?.name ?? user?.email ?? user?.id ?? ''}`,
+        '',
+      ];
+
+      const bodyLines: string[] = [];
+
+      for (const item of departmentItems) {
+        bodyLines.push(
+          `Estudiante: ${item.student?.name ?? item.studentId}`,
+        );
+        bodyLines.push(`Horas: ${item.hours}`);
+        bodyLines.push(`Precio: ${item.pricePerHour}`);
+        bodyLines.push(`Subtotal: ${item.subtotal}`);
+        bodyLines.push(`Diezmo: ${item.tithe}`);
+        bodyLines.push(`Total: ${item.total}`);
+        bodyLines.push(`Pagar: ${item.payable}`);
+        bodyLines.push(`Cobrar: ${item.receivable}`);
+
+        const workHours = await this.prismaService.workHours.findMany({
+          where: { id: { in: item.workHoursIds } },
+          orderBy: { start: 'asc' },
+        });
+
+        if (workHours.length) {
+          bodyLines.push('Detalle de horas:');
+          for (const entry of workHours) {
+            bodyLines.push(
+              `- ${entry.start.toISOString()} -> ${entry.end.toISOString()} | horas ${entry.amount} | precio ${entry.price} | total ${entry.total}`,
+            );
+          }
+        }
+
+        bodyLines.push('');
+      }
+
+      const text = [...headerLines, ...bodyLines].join('\n');
+      const subject = `Aplicacion de horas beca - ${
+        department?.name ?? departmentId
+      }`;
+
+      await this.mailerService.sendMail({
+        to: recipients,
+        subject,
+        text,
+      });
+    }
   }
 }

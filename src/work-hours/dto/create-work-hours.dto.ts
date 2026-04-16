@@ -15,13 +15,15 @@ export class CreateWorkHoursDto {
   @IsDateString()
   end: string;
 
-  @ApiProperty()
+  @ApiPropertyOptional()
+  @IsOptional()
   @IsNumber()
-  amount: number;
+  amount?: number;
 
-  @ApiProperty()
+  @ApiPropertyOptional()
+  @IsOptional()
   @IsNumber()
-  price: number;
+  price?: number;
 
   @ApiPropertyOptional({ enum: WorkHoursStatus })
   @IsOptional()

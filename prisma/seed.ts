@@ -1,4 +1,9 @@
 import { PeriodStatus, PrismaClient } from '@prisma/client';
+import { config } from 'dotenv';
+import * as admin from 'firebase-admin';
+import { getCredentialsFromEnv } from '../src/utils';
+
+config();
 
 const prisma = new PrismaClient();
 
@@ -13,7 +18,10 @@ type PriceItem = {
 async function ensureRole(name: string, allowedPermissions: string[]) {
   const existing = await prisma.role.findFirst({ where: { name } });
   if (existing) {
-    return existing;
+    return prisma.role.update({
+      where: { id: existing.id },
+      data: { allowedPermissions },
+    });
   }
 
   return prisma.role.create({
@@ -102,6 +110,91 @@ async function ensurePeriod(name: string, start: Date, end: Date, status: Period
   });
 }
 
+async function refreshClaimsForUsers() {
+  const credentials = getCredentialsFromEnv();
+
+  if (!credentials) {
+    console.warn('Skipping Firebase claim refresh: FIREBASE_CREDENTIAL not set');
+    return;
+  }
+
+  if (!admin.apps.length) {
+    admin.initializeApp({
+      credential: admin.credential.cert(credentials as admin.ServiceAccount),
+    });
+  }
+
+  const defaultPassword = process.env.SEED_USER_PASSWORD || 'ChangeMe123!';
+  const users = await prisma.user.findMany({ include: { role: true } });
+
+  const ensureFirebaseUser = async (user: {
+    uuid: string;
+    email: string;
+    name: string;
+  }): Promise<boolean> => {
+    try {
+      await admin.auth().getUser(user.uuid);
+      await admin.auth().updateUser(user.uuid, {
+        email: user.email,
+        displayName: user.name,
+      });
+      return true;
+    } catch (error: any) {
+      if (error?.code !== 'auth/user-not-found') {
+        throw error;
+      }
+    }
+
+    try {
+      const existingByEmail = await admin.auth().getUserByEmail(user.email);
+      console.warn(
+        `Skipping Firebase creation for ${user.email}: uid mismatch (${existingByEmail.uid})`,
+      );
+      return false;
+    } catch (error: any) {
+      if (error?.code !== 'auth/user-not-found') {
+        throw error;
+      }
+    }
+
+    await admin.auth().createUser({
+      uid: user.uuid,
+      email: user.email,
+      password: defaultPassword,
+      displayName: user.name,
+    });
+
+    return true;
+  };
+
+  for (const user of users) {
+    try {
+      const canSetClaims = await ensureFirebaseUser({
+        uuid: user.uuid,
+        email: user.email,
+        name: user.name,
+      });
+
+      if (!canSetClaims) {
+        continue;
+      }
+
+      await admin.auth().setCustomUserClaims(user.uuid, {
+        allowedPermissions: user.role.allowedPermissions,
+        roleId: user.roleId,
+      });
+    } catch (error: any) {
+      if (error?.code === 'auth/user-not-found') {
+        console.warn(
+          `Skipping claims for ${user.email ?? user.uuid}: Firebase user not found`,
+        );
+        continue;
+      }
+      throw error;
+    }
+  }
+}
+
 async function ensureStudent(name: string, email: string, phone: string, code: string) {
   const existing = await prisma.student.findFirst({ where: { code } });
   if (existing) {
@@ -156,10 +249,16 @@ async function main() {
     'permissions.write',
     'pricing.read',
     'pricing.write',
+    'mailing.read',
+    'mailing.write',
+    'mailing.delete',
     'scholarship.read',
     'scholarship.write',
     'work-hours.read',
     'work-hours.write',
+    'work-hours.approve',
+    'work-hours.financials.read',
+    'work-hours.apply',
     'time-entries.read',
     'time-entries.write',
     'reports.read',
@@ -172,6 +271,8 @@ async function main() {
     'configs.read',
     'scholarship.read',
     'work-hours.read',
+    'work-hours.financials.read',
+    'work-hours.apply',
     'time-entries.read',
     'reports.read',
   ]);
@@ -272,6 +373,8 @@ async function main() {
 
   await ensureStudentDepartment(studentOne.id, devDepartment.id);
   await ensureStudentDepartment(studentTwo.id, opsDepartment.id);
+
+  await refreshClaimsForUsers();
 
   console.log('Seed completed');
   console.log(`Roles: ${adminRole.id}, ${operatorRole.id}, ${supportRole.id}`);
