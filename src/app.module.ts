@@ -20,6 +20,7 @@ import { ScholarshipRequestModule } from './scholarship-request/scholarship-requ
 import { PriceModule } from './price/price.module';
 import { WorkHoursModule } from './work-hours/work-hours.module';
 import { TimeEntriesModule } from './time-entries/time-entries.module';
+import { ScholarshipPayrollModule } from './scholarship-payroll/scholarship-payroll.module';
 
 @Module({
   imports: [
@@ -36,6 +37,7 @@ import { TimeEntriesModule } from './time-entries/time-entries.module';
     PriceModule,
     WorkHoursModule,
     TimeEntriesModule,
+    ScholarshipPayrollModule,
   ],
   controllers: [AppController],
   providers: [AppService],

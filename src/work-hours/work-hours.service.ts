@@ -42,13 +42,25 @@ export class WorkHoursService {
     query: GetWorkHoursDto,
     user: any,
   ): Promise<PaginatedResponse<WorkHours>> {
-    const { page = 1, size = 10 } = query;
+    const { page = 1, size = 10, departmentId, studentId, periodId } = query;
     const { take, skip } = createPaginationMetadata(page, size);
 
     // Build where clause: non-admins can only see their department's hours
     const where: any = {};
     if (user.role.name !== 'Admin') {
       where.departmentId = user.departmentId;
+    }
+
+    if (departmentId) {
+      where.departmentId = Number(departmentId);
+    }
+
+    if (studentId) {
+      where.studentId = Number(studentId);
+    }
+
+    if (periodId) {
+      where.periodId = Number(periodId);
     }
 
     const [workHours, total] = await Promise.all([

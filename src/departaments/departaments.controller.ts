@@ -7,6 +7,8 @@ import { Department } from '@prisma/client';
 import { PaginatedResponse } from '../utils/pagination.util';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { PaginationParamsPipe } from '../pipes/pagination-params.pipe';
+import { Roles } from '../guards/role.guard';
+import { DEPARTMENTS } from '../permissions/permissions';
 
 @ApiTags('Departments')
 @ApiBearerAuth()
@@ -15,6 +17,7 @@ export class DepartamentsController {
   constructor(private readonly departamentsService: DepartamentsService) {}
 
   @Get()
+  @Roles(DEPARTMENTS.DEPARTMENTS_READ)
   async findAll(
     @Query(new PaginationParamsPipe()) query: GetDepartamentDto,
   ): Promise<PaginatedResponse<Department>> {
@@ -22,17 +25,20 @@ export class DepartamentsController {
   }
 
   @Get(':id')
+  @Roles(DEPARTMENTS.DEPARTMENTS_READ)
   async findOne(@Param('id') id: string): Promise<Department> {
     return this.departamentsService.findOne(Number(id));
   }
 
   @Post()
+  @Roles(DEPARTMENTS.DEPARTMENTS_WRITE)
   async create(@Body() body: CreateDepartamentDto): Promise<Department> {
     console.log('◉ ▶ DepartamentsController ▶ create ▶ body:', body);
     return this.departamentsService.createDepartamet(body);
   }
 
   @Put(':id')
+  @Roles(DEPARTMENTS.DEPARTMENTS_WRITE)
   async update(
     @Param('id') id: string,
     @Body() body: UpdateDepartamentDto,

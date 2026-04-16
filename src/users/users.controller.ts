@@ -19,6 +19,8 @@ import { GetUsersDto } from './dto/get-users.dto';
 import { PaginationParamsPipe } from '../pipes/pagination-params.pipe';
 import { AuthenticatedRequest } from '../auth/auth.middleware';
 import { PrismaService } from '../common/prisma.service';
+import { Roles } from '../guards/role.guard';
+import { USERS } from '../permissions/permissions';
 
 @ApiTags('Users')
 @ApiBearerAuth()
@@ -30,6 +32,7 @@ export class UsersController {
   ) {}
 
   @Get()
+  @Roles(USERS.USERS_READ)
   async findAll(
     @Query(new PaginationParamsPipe()) query: GetUsersDto,
   ): Promise<PaginatedResponse<User>> {
@@ -71,6 +74,7 @@ export class UsersController {
   }
 
   @Get(':identifier')
+  @Roles(USERS.USERS_READ)
   async findOne(
     @Param('identifier') identifier: string,
   ): Promise<UserWithRoleDepartment> {
@@ -82,11 +86,13 @@ export class UsersController {
   }
 
   @Post()
+  @Roles(USERS.USERS_WRITE)
   async create(@Body() body: CreateUserDto): Promise<User> {
     return this.usersService.create(body);
   }
 
   @Put(':identifier')
+  @Roles(USERS.USERS_WRITE)
   async update(
     @Body() body: UpdateUserDto,
     @Param('identifier') identifier: string,

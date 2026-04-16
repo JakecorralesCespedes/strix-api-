@@ -7,6 +7,8 @@ import { PaginatedResponse } from '../utils/pagination.util';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { PaginationParamsPipe } from '../pipes/pagination-params.pipe';
 import { GetPeriodDto } from './dto/get-period.dto';
+import { Roles } from '../guards/role.guard';
+import { PERIODS } from '../permissions/permissions';
 
 @ApiTags('Periods')
 @ApiBearerAuth()
@@ -15,6 +17,7 @@ export class PeriodsController {
   constructor(private readonly periodsService: PeriodsService) {}
 
   @Get()
+  @Roles(PERIODS.PERIODS_READ)
   async findAll(
     @Query(new PaginationParamsPipe()) query: GetPeriodDto,
   ): Promise<PaginatedResponse<Period>> {
@@ -22,16 +25,19 @@ export class PeriodsController {
   }
 
   @Get(':id')
+  @Roles(PERIODS.PERIODS_READ)
   async findOne(@Param('id') id: string): Promise<Period> {
     return this.periodsService.findOne(Number(id));
   }
 
   @Post()
+  @Roles(PERIODS.PERIODS_WRITE)
   async create(@Body() body: CreatePeriodDto): Promise<Period> {
     return this.periodsService.createPeriod(body);
   }
 
   @Put(':id')
+  @Roles(PERIODS.PERIODS_WRITE)
   async update(
     @Body() body: UpdatePeriodDto,
     @Param('id') id: string,

@@ -102,6 +102,7 @@ export class DepartamentsService {
       skip,
       include: {
         users: true,
+        head: true,
       },
     };
     const [departament, total] = await Promise.all([
@@ -115,6 +116,9 @@ export class DepartamentsService {
     return this.prismaService.department.findFirst({
       where: {
         id,
+      },
+      include: {
+        head: true,
       },
     });
   }
@@ -131,16 +135,50 @@ export class DepartamentsService {
     data: UpdateDepartamentDto,
   ): Promise<Department> {
     const pricing = await this.resolvePricing(data, id);
+    const headId = await this.resolveHeadId(data.headId, id);
+
+    const updateData: Record<string, unknown> = {
+      name: data.name,
+      code: data.code,
+      pricing,
+    };
+
+    if (headId !== undefined) {
+      updateData.headId = headId;
+    }
 
     return this.prismaService.department.update({
       where: {
         id,
       },
-      data: {
-        name: data.name,
-        code: data.code,
-        pricing,
-      },
+      data: updateData,
     });
+  }
+
+  private async resolveHeadId(
+    headId: number | null | undefined,
+    departmentId: number,
+  ): Promise<number | null | undefined> {
+    if (headId === undefined) {
+      return undefined;
+    }
+
+    if (headId === null) {
+      return null;
+    }
+
+    const user = await this.prismaService.user.findFirst({
+      where: { id: headId },
+    });
+
+    if (!user) {
+      throw new BadRequestException('Head user not found');
+    }
+
+    if (user.departmentId !== departmentId) {
+      throw new BadRequestException('Head user must belong to this department');
+    }
+
+    return headId;
   }
 }

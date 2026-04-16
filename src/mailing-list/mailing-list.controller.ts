@@ -16,6 +16,8 @@ import { PaginatedResponse } from '../utils/pagination.util';
 import { MailingList } from '@prisma/client';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { PaginationParamsPipe } from '../pipes/pagination-params.pipe';
+import { Roles } from '../guards/role.guard';
+import { MAILING_LIST } from '../permissions/permissions';
 
 @ApiTags('Mailing List')
 @ApiBearerAuth()
@@ -24,11 +26,13 @@ export class MailingListController {
   constructor(private readonly mailingListService: MailingListService) {}
 
   @Post()
+  @Roles(MAILING_LIST.MAILING_LIST_WRITE)
   create(@Body() createMailingListDto: CreateMailingListDto) {
     return this.mailingListService.createMailingList(createMailingListDto);
   }
 
   @Get()
+  @Roles(MAILING_LIST.MAILING_LIST_READ)
   async findAll(
     @Query(new PaginationParamsPipe()) query: GetMailingListDto,
   ): Promise<PaginatedResponse<MailingList>> {
@@ -36,11 +40,13 @@ export class MailingListController {
   }
 
   @Get(':id')
+  @Roles(MAILING_LIST.MAILING_LIST_READ)
   findOne(@Param('id') id: string) {
     return this.mailingListService.findOne(Number(id));
   }
 
   @Put(':id')
+  @Roles(MAILING_LIST.MAILING_LIST_WRITE)
   update(
     @Param('id') id: string,
     @Body() updateMailingListDto: UpdateMailingListDto,
@@ -51,6 +57,7 @@ export class MailingListController {
     );
   }
   @Delete(':id')
+  @Roles(MAILING_LIST.MAILING_LIST_DELETE)
   remove(@Param('id') id: string) {
     return this.mailingListService.remove(Number(id));
   }
