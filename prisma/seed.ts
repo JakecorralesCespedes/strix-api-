@@ -259,8 +259,6 @@ async function main() {
     'work-hours.approve',
     'work-hours.financials.read',
     'work-hours.apply',
-    'time-entries.read',
-    'time-entries.write',
     'reports.read',
   ]);
 
@@ -273,7 +271,6 @@ async function main() {
     'work-hours.read',
     'work-hours.financials.read',
     'work-hours.apply',
-    'time-entries.read',
     'reports.read',
   ]);
 
@@ -282,7 +279,6 @@ async function main() {
     'departments.read',
     'scholarship.read',
     'work-hours.read',
-    'time-entries.read',
   ]);
 
   const priceList: PriceItem[] = [

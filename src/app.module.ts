@@ -19,7 +19,6 @@ import { PermissionsModule } from './permissions/permissions.module';
 import { ScholarshipRequestModule } from './scholarship-request/scholarship-request.module';
 import { PriceModule } from './price/price.module';
 import { WorkHoursModule } from './work-hours/work-hours.module';
-import { TimeEntriesModule } from './time-entries/time-entries.module';
 import { ScholarshipPayrollModule } from './scholarship-payroll/scholarship-payroll.module';
 
 @Module({
@@ -36,7 +35,6 @@ import { ScholarshipPayrollModule } from './scholarship-payroll/scholarship-payr
     ScholarshipRequestModule,
     PriceModule,
     WorkHoursModule,
-    TimeEntriesModule,
     ScholarshipPayrollModule,
   ],
   controllers: [AppController],

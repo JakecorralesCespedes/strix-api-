@@ -52,11 +52,6 @@ export enum WORK_HOURS {
   WORK_HOURS_APPLY = 'work-hours.apply',
 }
 
-export enum TIME_ENTRIES {
-  TIME_ENTRIES_READ = 'time-entries.read',
-  TIME_ENTRIES_WRITE = 'time-entries.write',
-}
-
 export enum REPORTS {
   REPORTS_READ = 'reports.read',
 }
@@ -72,5 +67,4 @@ export type ADMIN =
   | PRICING
   | SCHOLARSHIP_REQUESTS
   | WORK_HOURS
-  | TIME_ENTRIES
   | REPORTS;
