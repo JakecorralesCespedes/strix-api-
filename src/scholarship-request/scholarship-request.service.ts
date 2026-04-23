@@ -22,12 +22,29 @@ export class ScholarshipRequestService {
     private readonly mailerService: MailerService,
   ) {}
 
+  private getAllowedDepartmentIds(user: any): number[] {
+    if (user?.role?.name === 'Admin') {
+      return [];
+    }
+
+    const allowed = (user?.departmentRoles ?? []).map(
+      (item) => item.departmentId,
+    );
+    if (!allowed.length && user?.departmentId) {
+      allowed.push(user.departmentId);
+    }
+
+    return allowed;
+  }
+
   private async checkDepartmentAccess(departmentId: number, user: any) {
     if (user.role.name === 'Admin') return;
 
-    if (user.departmentId !== departmentId) {
+    const allowedDepartmentIds = this.getAllowedDepartmentIds(user);
+
+    if (!allowedDepartmentIds.includes(departmentId)) {
       throw new BadRequestException(
-        `You can only manage scholarship requests for department ${user.departmentId}`,
+        `You can only manage scholarship requests for departments ${allowedDepartmentIds.join(', ')}`,
       );
     }
   }
@@ -53,6 +70,15 @@ export class ScholarshipRequestService {
     });
     if (!student) {
       throw new BadRequestException('Student not found');
+    }
+
+    const existing = await this.prismaService.studentOnDepartment.findFirst({
+      where: { studentId: data.studentId, departmentId: data.departmentId },
+    });
+    if (existing) {
+      throw new BadRequestException(
+        'Ya existe una solicitud para este estudiante en este departamento',
+      );
     }
 
     return this.prismaService.studentOnDepartment.create({
@@ -82,7 +108,10 @@ export class ScholarshipRequestService {
     // Build where clause: non-admins only see their department
     const where: any = {};
     if (user.role.name !== 'Admin') {
-      where.departmentId = user.departmentId;
+      const allowedDepartmentIds = this.getAllowedDepartmentIds(user);
+      where.departmentId = {
+        in: allowedDepartmentIds.length ? allowedDepartmentIds : [-1],
+      };
     }
 
     if (departmentId) {
@@ -130,10 +159,13 @@ export class ScholarshipRequestService {
     }
 
     // Verify user has access to this department
-    if (user.role.name !== 'Admin' && record.departmentId !== user.departmentId) {
-      throw new BadRequestException(
-        'You do not have access to this scholarship request',
-      );
+    if (user.role.name !== 'Admin') {
+      const allowedDepartmentIds = this.getAllowedDepartmentIds(user);
+      if (!allowedDepartmentIds.includes(record.departmentId)) {
+        throw new BadRequestException(
+          'You do not have access to this scholarship request',
+        );
+      }
     }
 
     return record;
@@ -147,6 +179,11 @@ export class ScholarshipRequestService {
     const record = await this.findOne(id, user);
     await this.checkDepartmentAccess(record.departmentId, user);
 
+    const nextDepartmentId = data.departmentId ?? record.departmentId;
+    if (nextDepartmentId !== record.departmentId) {
+      await this.checkDepartmentAccess(nextDepartmentId, user);
+    }
+
     const previousStatus = record.status;
 
     const updated = await this.prismaService.studentOnDepartment.update({
@@ -155,6 +192,7 @@ export class ScholarshipRequestService {
       },
       data: {
         status: data.status,
+        departmentId: nextDepartmentId,
       },
     });
 

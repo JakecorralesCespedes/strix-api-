@@ -12,7 +12,7 @@ export class DepartmentGuard implements CanActivate {
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest();
-    const firebaseUser = request.firebaseUser;
+    const firebaseUser = request.firebaseUser ?? request.raw?.firebaseUser;
 
     if (!firebaseUser) {
       throw new ForbiddenException('No authenticated user');
@@ -21,7 +21,13 @@ export class DepartmentGuard implements CanActivate {
     // Find user in database
     const user = await this.prisma.user.findFirst({
       where: { uuid: firebaseUser.uid },
-      include: { role: true },
+      include: {
+        role: true,
+        department: true,
+        departmentRoles: {
+          include: { role: true, department: true },
+        },
+      },
     });
 
     if (!user) {
@@ -37,11 +43,25 @@ export class DepartmentGuard implements CanActivate {
     }
 
     // For non-admins, check if they can access the requested department
-    const departmentId = request.params.departmentId || request.body?.departmentId;
+    const departmentId =
+      request.params?.departmentId ??
+      request.body?.departmentId ??
+      request.query?.departmentId;
 
-    if (departmentId && user.departmentId !== Number(departmentId)) {
+    const allowedDepartmentIds = (user.departmentRoles ?? []).map(
+      (item) => item.departmentId,
+    );
+    if (!allowedDepartmentIds.length && user.departmentId) {
+      allowedDepartmentIds.push(user.departmentId);
+    }
+    request.allowedDepartmentIds = allowedDepartmentIds;
+
+    if (
+      departmentId &&
+      !allowedDepartmentIds.includes(Number(departmentId))
+    ) {
       throw new ForbiddenException(
-        `You can only access department ${user.departmentId}`,
+        `You can only access departments ${allowedDepartmentIds.join(', ')}`,
       );
     }
 

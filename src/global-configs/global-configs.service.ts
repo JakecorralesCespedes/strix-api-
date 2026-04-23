@@ -1,13 +1,16 @@
 import { Injectable } from '@nestjs/common';
 
-// import { UpdateConfigsDto } from './dto/dto/update-configs.dto';
 import { PrismaService } from '../common/prisma.service';
+import { MailerService } from '../common/mailer.service';
 import { UpdateConfigsDto } from './dto/update-configs.dto';
 import { Prisma } from '@prisma/client';
 
 @Injectable()
 export class GlobalConfigsService {
-  constructor(private prismaservice: PrismaService) {}
+  constructor(
+    private prismaservice: PrismaService,
+    private mailerService: MailerService,
+  ) {}
 
   private updateQuery(
     key: string,
@@ -45,5 +48,17 @@ export class GlobalConfigsService {
       this.prismaservice.globalSetting.upsert(this.updateQuery(key, value)),
     );
     return Promise.all(updates);
+  }
+
+  getSmtpStatus() {
+    const configured = this.mailerService.isConfigured();
+    return {
+      configured,
+      requiredEnvVars: ['SMTP_HOST', 'SMTP_PORT', 'SMTP_FROM'],
+      optionalEnvVars: ['SMTP_USER', 'SMTP_PASS', 'SMTP_SECURE'],
+      note: configured
+        ? 'Servicio de correo activo.'
+        : 'Correos deshabilitados. Configura las variables de entorno SMTP en el servidor para habilitarlos.',
+    };
   }
 }

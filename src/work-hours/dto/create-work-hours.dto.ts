@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsDateString, IsEnum, IsNumber, IsOptional, IsString } from 'class-validator';
+import { IsBoolean, IsDateString, IsEnum, IsNumber, IsOptional, IsString } from 'class-validator';
 import { WorkHoursStatus } from '@prisma/client';
 
 export class CreateWorkHoursDto {
@@ -41,4 +41,9 @@ export class CreateWorkHoursDto {
   @ApiProperty()
   @IsNumber()
   periodId: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsBoolean()
+  isAdditional?: boolean;
 }

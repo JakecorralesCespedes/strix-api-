@@ -72,6 +72,7 @@ model Role {
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
   users              User[]
+  userDepartments    UserDepartment[]
 }
 
 
@@ -89,6 +90,7 @@ model Department {
   hours        WorkHours[]
   scholarshipPayroll ScholarshipPayroll[]
   timeEntries  TimeEntry[]
+  userRoles    UserDepartment[]
   head         User?                 @relation("DepartmentHead", fields: [headId], references: [id])
 }
 
@@ -108,6 +110,23 @@ model User {
   scholarshipPayroll ScholarshipPayroll[]
   timeEntries  TimeEntry[]
   headedDepartments Department[] @relation("DepartmentHead")
+  departmentRoles UserDepartment[]
+}
+
+model UserDepartment {
+  id           Int         @id @default(autoincrement())
+  userId       Int
+  departmentId Int
+  roleId       Int
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+  user         User        @relation(fields: [userId], references: [id])
+  department   Department  @relation(fields: [departmentId], references: [id])
+  role         Role        @relation(fields: [roleId], references: [id])
+
+  @@unique([userId, departmentId])
+  @@index([departmentId])
+  @@index([roleId])
 }
 
 model StudentOnDepartment {
@@ -145,6 +164,7 @@ model WorkHours {
   price         Float
   total         Float
   status        WorkHoursStatus @default(PENDING)
+  isAdditional  Boolean         @default(false)
   registedBy    Int
   studentId     Int
   departmentId  Int

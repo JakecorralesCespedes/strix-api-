@@ -94,25 +94,52 @@ export class DepartamentsService {
 
   async findAll(
     query: GetDepartamentDto,
+    user?: any,
   ): Promise<PaginatedResponse<Department>> {
     const { page = 1, size = 10 } = query;
     const { take, skip } = createPaginationMetadata(page, size);
     const prismaQuery = {
       take,
       skip,
+      where: {} as Record<string, unknown>,
       include: {
         users: true,
         head: true,
       },
     };
+
+    if (user?.role?.name !== 'Admin') {
+      const allowedDepartmentIds = (user?.departmentRoles ?? []).map(
+        (item) => item.departmentId,
+      );
+      if (!allowedDepartmentIds.length && user?.departmentId) {
+        allowedDepartmentIds.push(user.departmentId);
+      }
+
+      prismaQuery.where = {
+        id: { in: allowedDepartmentIds.length ? allowedDepartmentIds : [-1] },
+      };
+    }
     const [departament, total] = await Promise.all([
       this.prismaService.department.findMany(prismaQuery),
-      this.prismaService.department.count(),
+      this.prismaService.department.count({ where: prismaQuery.where }),
     ]);
     return createPaginatedResponse<Department>(departament, total, page, size);
   }
 
-  findOne(id: number) {
+  async findOne(id: number, user?: any) {
+    if (user?.role?.name !== 'Admin') {
+      const allowedDepartmentIds = (user?.departmentRoles ?? []).map(
+        (item) => item.departmentId,
+      );
+      if (!allowedDepartmentIds.length && user?.departmentId) {
+        allowedDepartmentIds.push(user.departmentId);
+      }
+      if (!allowedDepartmentIds.includes(id)) {
+        throw new BadRequestException('Not allowed for this department');
+      }
+    }
+
     return this.prismaService.department.findFirst({
       where: {
         id,

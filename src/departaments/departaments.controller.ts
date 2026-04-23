@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Put, Query } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Put, Query, Req } from '@nestjs/common';
 import { DepartamentsService } from './departaments.service';
 import { CreateDepartamentDto } from './dto/create-departament.dto';
 import { UpdateDepartamentDto } from './dto/update-departament.dto';
@@ -20,14 +20,15 @@ export class DepartamentsController {
   @Roles(DEPARTMENTS.DEPARTMENTS_READ)
   async findAll(
     @Query(new PaginationParamsPipe()) query: GetDepartamentDto,
+    @Req() req,
   ): Promise<PaginatedResponse<Department>> {
-    return this.departamentsService.findAll(query);
+    return this.departamentsService.findAll(query, req.user);
   }
 
   @Get(':id')
   @Roles(DEPARTMENTS.DEPARTMENTS_READ)
-  async findOne(@Param('id') id: string): Promise<Department> {
-    return this.departamentsService.findOne(Number(id));
+  async findOne(@Param('id') id: string, @Req() req): Promise<Department> {
+    return this.departamentsService.findOne(Number(id), req.user);
   }
 
   @Post()

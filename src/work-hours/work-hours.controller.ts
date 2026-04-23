@@ -7,6 +7,8 @@ import { GetWorkHoursDto } from './dto/get-work-hours.dto';
 import { DepartmentGuard } from '../common/guards/department.guard';
 import { CreateWorkHoursDto } from './dto/create-work-hours.dto';
 import { UpdateWorkHoursDto } from './dto/update-work-hours.dto';
+import { Roles } from '../guards/role.guard';
+import { WORK_HOURS } from '../permissions/permissions';
 
 @ApiTags('Work Hours')
 @ApiBearerAuth()
@@ -16,6 +18,7 @@ export class WorkHoursController {
   constructor(private readonly workHoursService: WorkHoursService) {}
 
   @Get()
+  @Roles(WORK_HOURS.WORK_HOURS_READ)
   async findAll(
     @Query(new PaginationParamsPipe()) query: GetWorkHoursDto,
     @Req() req,
@@ -23,7 +26,14 @@ export class WorkHoursController {
     return this.workHoursService.findAll(query, req.user);
   }
 
+  @Get('pending-count')
+  @Roles(WORK_HOURS.WORK_HOURS_READ)
+  async pendingCount(@Req() req): Promise<{ count: number }> {
+    return this.workHoursService.findPendingCount(req.user);
+  }
+
   @Get(':id')
+  @Roles(WORK_HOURS.WORK_HOURS_READ)
   async findOne(
     @Param('id') id: string,
     @Req() req,
@@ -32,6 +42,7 @@ export class WorkHoursController {
   }
 
   @Post()
+  @Roles(WORK_HOURS.WORK_HOURS_WRITE)
   async create(
     @Body() data: CreateWorkHoursDto,
     @Req() req,
@@ -40,6 +51,7 @@ export class WorkHoursController {
   }
 
   @Put(':id')
+  @Roles(WORK_HOURS.WORK_HOURS_WRITE)
   async update(
     @Param('id') id: string,
     @Body() data: UpdateWorkHoursDto,

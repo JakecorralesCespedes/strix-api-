@@ -16,7 +16,11 @@ import { RolesService } from '../roles/roles.service';
 const DEFAULT_ROLE = 2;
 
 export type UserWithRoleDepartment = Prisma.UserGetPayload<{
-  include: { role: true; department: true };
+  include: {
+    role: true;
+    department: true;
+    departmentRoles: { include: { role: true; department: true } };
+  };
 }>;
 
 @Injectable()
@@ -27,39 +31,132 @@ export class UsersService {
     private readonly rolesService: RolesService,
   ) {}
 
+  private normalizeDepartmentRoles(
+    departmentRoles: CreateUserDto['departmentRoles'] | undefined,
+    fallbackDepartmentId: number,
+    fallbackRoleId: number,
+  ): Array<{ departmentId: number; roleId: number }> {
+    const roles = departmentRoles?.length
+      ? departmentRoles
+      : [{ departmentId: fallbackDepartmentId, roleId: fallbackRoleId }];
+
+    const unique = new Map<number, number>();
+    roles.forEach((item) => {
+      if (item?.departmentId && item?.roleId) {
+        unique.set(item.departmentId, item.roleId);
+      }
+    });
+
+    if (!unique.size) {
+      unique.set(fallbackDepartmentId, fallbackRoleId);
+    }
+
+    return Array.from(unique.entries()).map(([departmentId, roleId]) => ({
+      departmentId,
+      roleId,
+    }));
+  }
+
+  private resolveActiveDepartmentId(
+    activeDepartmentId: number | undefined,
+    departmentRoles: Array<{ departmentId: number; roleId: number }>,
+    fallbackDepartmentId: number,
+  ): number {
+    if (
+      activeDepartmentId &&
+      departmentRoles.some((item) => item.departmentId === activeDepartmentId)
+    ) {
+      return activeDepartmentId;
+    }
+
+    return departmentRoles[0]?.departmentId ?? fallbackDepartmentId;
+  }
+
+  private resolveActiveRoleId(
+    activeDepartmentId: number,
+    departmentRoles: Array<{ departmentId: number; roleId: number }>,
+    fallbackRoleId: number,
+  ): number {
+    const match = departmentRoles.find(
+      (item) => item.departmentId === activeDepartmentId,
+    );
+    return match?.roleId ?? fallbackRoleId;
+  }
+
+  private async validateDepartmentRoles(
+    departmentRoles: Array<{ departmentId: number; roleId: number }>,
+  ) {
+    const departmentIds = Array.from(
+      new Set(departmentRoles.map((item) => item.departmentId)),
+    );
+    const roleIds = Array.from(
+      new Set(departmentRoles.map((item) => item.roleId)),
+    );
+
+    const [departments, roles] = await Promise.all([
+      this.prismaService.department.findMany({
+        where: { id: { in: departmentIds } },
+        select: { id: true },
+      }),
+      this.prismaService.role.findMany({
+        where: { id: { in: roleIds } },
+        select: { id: true },
+      }),
+    ]);
+
+    if (departments.length !== departmentIds.length) {
+      throw new BadRequestException('One or more departments do not exist');
+    }
+
+    if (roles.length !== roleIds.length) {
+      throw new BadRequestException('One or more roles do not exist');
+    }
+  }
+
   createUserInput(
     createUserDto: CreateUserDto,
     firebaseUser: UserRecord,
+    departmentRoles: Array<{ departmentId: number; roleId: number }>,
+    activeDepartmentId: number,
+    activeRoleId: number,
   ): Prisma.UserCreateInput {
-    const departmentId = createUserDto.departmentId ?? 1; // Default to first department
-    
-    const input: Prisma.UserCreateInput = {
+    return {
       email: createUserDto.email,
       name: createUserDto.name,
       phone: createUserDto.phone,
       uuid: firebaseUser.uid,
       department: {
-        connect: { id: departmentId },
+        connect: { id: activeDepartmentId },
       },
       role: {
-        connect: { id: DEFAULT_ROLE },
+        connect: { id: activeRoleId },
+      },
+      departmentRoles: {
+        create: departmentRoles.map((item) => ({
+          departmentId: item.departmentId,
+          roleId: item.roleId,
+        })),
       },
     };
-
-    if (createUserDto.roleId) {
-      input.role = {
-        connect: { id: createUserDto.roleId },
-      };
-    }
-
-    return input;
   }
 
   createUpdateUserInput(updateUser: UpdateUserDto): Prisma.UserUpdateInput {
-    const input: Prisma.UserUpdateInput = {
-      ...updateUser,
+    const {
+      password,
+      departmentRoles,
+      activeDepartmentId,
+      roleId,
+      departmentId,
+      ...rest
+    } = updateUser as UpdateUserDto & {
+      password?: string;
+      departmentRoles?: CreateUserDto['departmentRoles'];
+      activeDepartmentId?: number;
+      roleId?: number;
+      departmentId?: number;
     };
-    return input;
+
+    return { ...rest };
   }
   // crear susuario
   async create(createUserDto: CreateUserDto) {
@@ -67,11 +164,32 @@ export class UsersService {
       throw new BadRequestException('User already exists');
     }
 
-    const roleId = createUserDto.roleId ?? DEFAULT_ROLE;
-    const role = await this.rolesService.findOne(roleId);
+    const fallbackDepartmentId = createUserDto.departmentId ?? 1;
+    const fallbackRoleId = createUserDto.roleId ?? DEFAULT_ROLE;
+    const departmentRoles = this.normalizeDepartmentRoles(
+      createUserDto.departmentRoles,
+      fallbackDepartmentId,
+      fallbackRoleId,
+    );
+    await this.validateDepartmentRoles(departmentRoles);
+
+    const activeDepartmentId = this.resolveActiveDepartmentId(
+      createUserDto.activeDepartmentId ?? createUserDto.departmentId,
+      departmentRoles,
+      fallbackDepartmentId,
+    );
+    const activeRoleId = this.resolveActiveRoleId(
+      activeDepartmentId,
+      departmentRoles,
+      fallbackRoleId,
+    );
+
+    const role = await this.rolesService.findOne(activeRoleId);
 
     if (!role) {
-      throw new BadRequestException(`Role with id ${roleId} does not exist`);
+      throw new BadRequestException(
+        `Role with id ${activeRoleId} does not exist`,
+      );
     }
 
     const firebaseUser = await this.firebaseService.createUser({
@@ -85,7 +203,13 @@ export class UsersService {
     });
 
     const user = await this.prismaService.user.create({
-      data: this.createUserInput(createUserDto, firebaseUser),
+      data: this.createUserInput(
+        createUserDto,
+        firebaseUser,
+        departmentRoles,
+        activeDepartmentId,
+        activeRoleId,
+      ),
     });
 
     return user;
@@ -99,7 +223,11 @@ export class UsersService {
     const email = firebaseUser.email || 'unknown@local';
     const existingByEmail = await this.prismaService.user.findFirst({
       where: { email },
-      include: { role: true, department: true },
+      include: {
+        role: true,
+        department: true,
+        departmentRoles: { include: { role: true, department: true } },
+      },
     });
 
     if (existingByEmail) {
@@ -131,8 +259,15 @@ export class UsersService {
         uuid: firebaseUser.uid,
         role: { connect: { id: role.id } },
         department: { connect: { id: department.id } },
+        departmentRoles: {
+          create: [{ departmentId: department.id, roleId: role.id }],
+        },
       },
-      include: { role: true, department: true },
+      include: {
+        role: true,
+        department: true,
+        departmentRoles: { include: { role: true, department: true } },
+      },
     });
   }
 
@@ -147,6 +282,7 @@ export class UsersService {
       include: {
         role: true,
         department: true,
+        departmentRoles: { include: { role: true, department: true } },
       },
       where: {},
     };
@@ -200,6 +336,7 @@ export class UsersService {
       include: {
         role: true,
         department: true,
+        departmentRoles: { include: { role: true, department: true } },
       },
     });
   }
@@ -214,6 +351,11 @@ export class UsersService {
       where: {
         ...(isNumericId ? { id: maybeId } : { uuid: identifier }),
       },
+      include: {
+        role: true,
+        department: true,
+        departmentRoles: { include: { role: true, department: true } },
+      },
     });
 
     if (!existingUser) {
@@ -226,10 +368,101 @@ export class UsersService {
         email: updateUserDto.email,
       });
     }
-    //update prisma
-    const user = await this.prismaService.user.update({
-      where: { uuid: existingUser.uuid },
-      data: this.createUpdateUserInput(updateUserDto),
+    const updateAssignments = updateUserDto.departmentRoles?.length
+      ? this.normalizeDepartmentRoles(
+          updateUserDto.departmentRoles,
+          updateUserDto.departmentId ?? existingUser.departmentId,
+          updateUserDto.roleId ?? existingUser.roleId,
+        )
+      : null;
+
+    if (updateAssignments) {
+      await this.validateDepartmentRoles(updateAssignments);
+    }
+
+    let activeDepartmentId =
+      updateUserDto.activeDepartmentId ??
+      updateUserDto.departmentId ??
+      existingUser.departmentId;
+    let activeRoleId = updateUserDto.roleId ?? existingUser.roleId;
+
+    if (updateAssignments?.length) {
+      activeDepartmentId = this.resolveActiveDepartmentId(
+        updateUserDto.activeDepartmentId ?? updateUserDto.departmentId,
+        updateAssignments,
+        existingUser.departmentId,
+      );
+      activeRoleId = this.resolveActiveRoleId(
+        activeDepartmentId,
+        updateAssignments,
+        activeRoleId,
+      );
+    } else if (updateUserDto.activeDepartmentId) {
+      const match = existingUser.departmentRoles?.find(
+        (item) => item.departmentId === updateUserDto.activeDepartmentId,
+      );
+      if (match) {
+        activeRoleId = match.roleId;
+      }
+    }
+
+    if (activeRoleId !== existingUser.roleId) {
+      const activeRole = await this.rolesService.findOne(activeRoleId);
+      if (activeRole) {
+        await this.firebaseService.addCustomClaims(existingUser.uuid, {
+          allowedPermissions: activeRole.allowedPermissions,
+          roleId: activeRole.id,
+        });
+      }
+    }
+
+    const user = await this.prismaService.$transaction(async (tx) => {
+      if (updateAssignments?.length) {
+        await tx.userDepartment.deleteMany({
+          where: { userId: existingUser.id },
+        });
+
+        await tx.userDepartment.createMany({
+          data: updateAssignments.map((item) => ({
+            userId: existingUser.id,
+            departmentId: item.departmentId,
+            roleId: item.roleId,
+          })),
+        });
+      } else if (
+        updateUserDto.departmentId &&
+        updateUserDto.roleId &&
+        !updateUserDto.departmentRoles?.length
+      ) {
+        await tx.userDepartment.upsert({
+          where: {
+            userId_departmentId: {
+              userId: existingUser.id,
+              departmentId: updateUserDto.departmentId,
+            },
+          },
+          update: { roleId: updateUserDto.roleId },
+          create: {
+            userId: existingUser.id,
+            departmentId: updateUserDto.departmentId,
+            roleId: updateUserDto.roleId,
+          },
+        });
+      }
+
+      const data = this.createUpdateUserInput(updateUserDto);
+      data.department = { connect: { id: activeDepartmentId } };
+      data.role = { connect: { id: activeRoleId } };
+
+      return tx.user.update({
+        where: { uuid: existingUser.uuid },
+        data,
+        include: {
+          role: true,
+          department: true,
+          departmentRoles: { include: { role: true, department: true } },
+        },
+      });
     });
 
     return user;

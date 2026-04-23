@@ -43,6 +43,21 @@ export class ScholarshipPayrollService {
     private readonly mailerService: MailerService,
   ) {}
 
+  private getAllowedDepartmentIds(user: any): number[] {
+    if (user?.role?.name === 'Admin') {
+      return [];
+    }
+
+    const allowed = (user?.departmentRoles ?? []).map(
+      (item) => item.departmentId,
+    );
+    if (!allowed.length && user?.departmentId) {
+      allowed.push(user.departmentId);
+    }
+
+    return allowed;
+  }
+
   private round(value: number): number {
     return Number(value.toFixed(2));
   }
@@ -86,10 +101,14 @@ export class ScholarshipPayrollService {
   ): Promise<{ items: PayrollPreviewItem[]; totals: PayrollPreviewTotals }> {
     const { periodId, departmentId } = input;
 
-    if (user?.role?.name !== 'Admin' && departmentId) {
-      if (user.departmentId !== departmentId) {
-        throw new BadRequestException('Not allowed for this department');
-      }
+    const allowedDepartmentIds = this.getAllowedDepartmentIds(user);
+
+    if (
+      user?.role?.name !== 'Admin' &&
+      departmentId &&
+      !allowedDepartmentIds.includes(departmentId)
+    ) {
+      throw new BadRequestException('Not allowed for this department');
     }
 
     const where: any = {
@@ -101,7 +120,9 @@ export class ScholarshipPayrollService {
     if (departmentId) {
       where.departmentId = departmentId;
     } else if (user?.role?.name !== 'Admin') {
-      where.departmentId = user.departmentId;
+      where.departmentId = {
+        in: allowedDepartmentIds.length ? allowedDepartmentIds : [-1],
+      };
     }
 
     const workHours = await this.prismaService.workHours.findMany({

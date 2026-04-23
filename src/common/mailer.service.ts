@@ -30,6 +30,10 @@ export class MailerService {
     });
   }
 
+  isConfigured(): boolean {
+    return !!this.transporter && !!this.fromAddress;
+  }
+
   async sendMail(params: {
     to: string | string[];
     subject: string;

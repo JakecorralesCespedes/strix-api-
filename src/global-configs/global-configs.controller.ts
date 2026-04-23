@@ -23,4 +23,10 @@ export class GlobalConfigsController {
   async updateGlobalConfigs(@Body() updateConfigsDto: UpdateConfigsDto) {
     return this.globalConfigsService.updateGlobalConfigs(updateConfigsDto);
   }
+
+  @Get('smtp-status')
+  @Roles(GLOBAL_SETTINGS.GLOBAL_SETTINGS_READ)
+  getSmtpStatus() {
+    return this.globalConfigsService.getSmtpStatus();
+  }
 }

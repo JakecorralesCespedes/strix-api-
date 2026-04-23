@@ -8,6 +8,8 @@ import { PaginationParamsPipe } from '../pipes/pagination-params.pipe';
 import { PaginatedResponse } from '../utils/pagination.util';
 import { StudentOnDepartment } from '@prisma/client';
 import { DepartmentGuard } from '../common/guards/department.guard';
+import { Roles } from '../guards/role.guard';
+import { SCHOLARSHIP_REQUESTS } from '../permissions/permissions';
 
 @ApiTags('ScholarshipRequest')
 @ApiBearerAuth()
@@ -19,6 +21,7 @@ export class ScholarshipRequestController {
   ) {}
 
   @Post()
+  @Roles(SCHOLARSHIP_REQUESTS.SCHOLARSHIP_WRITE)
   async create(
     @Body() createScholarshipRequestDto: CreateScholarshipRequestDto,
     @Req() req,
@@ -30,6 +33,7 @@ export class ScholarshipRequestController {
   }
 
   @Get()
+  @Roles(SCHOLARSHIP_REQUESTS.SCHOLARSHIP_READ)
   async findAll(
     @Query(new PaginationParamsPipe()) query: GetScholarshipRequestDto,
     @Req() req,
@@ -38,11 +42,13 @@ export class ScholarshipRequestController {
   }
 
   @Get(':id')
+  @Roles(SCHOLARSHIP_REQUESTS.SCHOLARSHIP_READ)
   findOne(@Param('id') id: string, @Req() req) {
     return this.scholarshipRequestService.findOne(Number(id), req.user);
   }
 
   @Put(':id')
+  @Roles(SCHOLARSHIP_REQUESTS.SCHOLARSHIP_WRITE)
   update(
     @Param('id') id: string,
     @Body() updateScholarshipRequestDto: UpdateScholarshipRequestDto,

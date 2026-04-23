@@ -24,28 +24,79 @@ export type WorkHoursResponse = Omit<
 export class WorkHoursService {
   constructor(private readonly prismaService: PrismaService) {}
 
-  private hasPermission(user: any, permission: string): boolean {
+  private getAllowedDepartmentIds(user: any): number[] {
+    if (user?.role?.name === 'Admin') {
+      return [];
+    }
+
+    const allowed = (user?.departmentRoles ?? []).map(
+      (item) => item.departmentId,
+    );
+    if (!allowed.length && user?.departmentId) {
+      allowed.push(user.departmentId);
+    }
+
+    return allowed;
+  }
+
+  private getRoleForDepartment(user: any, departmentId?: number) {
+    if (!departmentId) {
+      return null;
+    }
+
+    const match = (user?.departmentRoles ?? []).find(
+      (item) => item.departmentId === departmentId,
+    )?.role;
+    if (match) {
+      return match;
+    }
+
+    if (!user?.departmentRoles?.length && user?.departmentId === departmentId) {
+      return user?.role ?? null;
+    }
+
+    return null;
+  }
+
+  private hasPermission(
+    user: any,
+    permission: string,
+    departmentId?: number,
+  ): boolean {
     if (user?.role?.name === 'Admin') {
       return true;
+    }
+
+    if (departmentId) {
+      const role = this.getRoleForDepartment(user, departmentId);
+      return (role?.allowedPermissions ?? []).includes(permission);
+    }
+
+    const roles = user?.departmentRoles ?? [];
+    if (roles.length) {
+      return roles.some((item) =>
+        (item.role?.allowedPermissions ?? []).includes(permission),
+      );
     }
 
     const allowed = user?.role?.allowedPermissions ?? [];
     return allowed.includes(permission);
   }
 
-  private canApprove(user: any): boolean {
-    return this.hasPermission(user, WORK_HOURS.WORK_HOURS_APPROVE);
+  private canApprove(user: any, departmentId?: number): boolean {
+    return this.hasPermission(user, WORK_HOURS.WORK_HOURS_APPROVE, departmentId);
   }
 
-  private canViewFinancials(user: any): boolean {
-    return this.hasPermission(user, WORK_HOURS.WORK_HOURS_FINANCIALS_READ);
+  private canViewFinancials(user: any, departmentId?: number): boolean {
+    return this.hasPermission(
+      user,
+      WORK_HOURS.WORK_HOURS_FINANCIALS_READ,
+      departmentId,
+    );
   }
 
-  private sanitizeWorkHours(
-    record: WorkHours,
-    canViewFinancials: boolean,
-  ): WorkHoursResponse {
-    if (canViewFinancials) {
+  private sanitizeWorkHours(record: WorkHours, user: any): WorkHoursResponse {
+    if (this.canViewFinancials(user, record.departmentId)) {
       return record as WorkHoursResponse;
     }
 
@@ -83,9 +134,11 @@ export class WorkHoursService {
   private async checkDepartmentAccess(departmentId: number, user: any) {
     if (user.role.name === 'Admin') return;
 
-    if (user.departmentId !== departmentId) {
+    const allowedDepartmentIds = this.getAllowedDepartmentIds(user);
+
+    if (!allowedDepartmentIds.includes(departmentId)) {
       throw new BadRequestException(
-        `You can only manage work hours for department ${user.departmentId}`,
+        `You can only manage work hours for departments ${allowedDepartmentIds.join(', ')}`,
       );
     }
   }
@@ -120,13 +173,20 @@ export class WorkHoursService {
     } = query;
     const { take, skip } = createPaginationMetadata(page, size);
 
-    // Build where clause: non-admins can only see their department's hours
+    const allowedDepartmentIds = this.getAllowedDepartmentIds(user);
+
     const where: any = {};
     if (user.role.name !== 'Admin') {
-      where.departmentId = user.departmentId;
-    }
+      if (departmentId && !allowedDepartmentIds.includes(Number(departmentId))) {
+        throw new BadRequestException('Not allowed for this department');
+      }
 
-    if (departmentId) {
+      where.departmentId = departmentId
+        ? Number(departmentId)
+        : {
+            in: allowedDepartmentIds.length ? allowedDepartmentIds : [-1],
+          };
+    } else if (departmentId) {
       where.departmentId = Number(departmentId);
     }
 
@@ -167,9 +227,8 @@ export class WorkHoursService {
       this.prismaService.workHours.count({ where }),
     ]);
 
-    const canViewFinancials = this.canViewFinancials(user);
     const sanitized = workHours.map((item) =>
-      this.sanitizeWorkHours(item, canViewFinancials),
+      this.sanitizeWorkHours(item, user),
     );
 
     return createPaginatedResponse<WorkHoursResponse>(
@@ -196,7 +255,22 @@ export class WorkHoursService {
     }
 
     await this.checkDepartmentAccess(record.departmentId, user);
-    return this.sanitizeWorkHours(record, this.canViewFinancials(user));
+    return this.sanitizeWorkHours(record, user);
+  }
+
+  async findPendingCount(user: any): Promise<{ count: number }> {
+    const allowedDepartmentIds = this.getAllowedDepartmentIds(user);
+
+    const where: any = { status: WorkHoursStatus.PENDING };
+
+    if (user.role.name !== 'Admin') {
+      where.departmentId = {
+        in: allowedDepartmentIds.length ? allowedDepartmentIds : [-1],
+      };
+    }
+
+    const count = await this.prismaService.workHours.count({ where });
+    return { count };
   }
 
   async create(data: CreateWorkHoursDto, user: any): Promise<WorkHoursResponse> {
@@ -216,7 +290,9 @@ export class WorkHoursService {
       throw new BadRequestException('Student not found');
     }
 
-    await this.ensureStudentInDepartment(data.studentId, data.departmentId);
+    if (!data.isAdditional) {
+      await this.ensureStudentInDepartment(data.studentId, data.departmentId);
+    }
 
     const period = await this.prismaService.period.findUnique({
       where: { id: data.periodId },
@@ -230,9 +306,7 @@ export class WorkHoursService {
     const amount = this.calculateAmount(startDate, endDate);
     const price = Number(department.pricing || 0);
     const total = amount * price;
-    const status = this.canApprove(user)
-      ? data.status ?? WorkHoursStatus.PENDING
-      : WorkHoursStatus.PENDING;
+    const status = WorkHoursStatus.PENDING;
 
     const created = await this.prismaService.workHours.create({
       data: {
@@ -243,6 +317,7 @@ export class WorkHoursService {
         price,
         total,
         status,
+        isAdditional: data.isAdditional ?? false,
         registedBy: user.id,
         studentId: data.studentId,
         departmentId: data.departmentId,
@@ -256,7 +331,7 @@ export class WorkHoursService {
       },
     });
 
-    return this.sanitizeWorkHours(created, this.canViewFinancials(user));
+    return this.sanitizeWorkHours(created, user);
   }
 
   async update(
@@ -269,7 +344,9 @@ export class WorkHoursService {
 
     await this.checkDepartmentAccess(nextDepartmentId, user);
 
-    if (data.studentId || data.departmentId) {
+    const isAdditional = data.isAdditional ?? existing.isAdditional;
+
+    if (!isAdditional && (data.studentId || data.departmentId)) {
       const studentId = data.studentId ?? existing.studentId;
       await this.ensureStudentInDepartment(studentId, nextDepartmentId);
     }
@@ -295,7 +372,7 @@ export class WorkHoursService {
     const amount = this.calculateAmount(startDate, endDate);
     const price = Number(department.pricing || 0);
     const total = amount * price;
-    const status = this.canApprove(user)
+    const status = this.canApprove(user, nextDepartmentId)
       ? data.status ?? existing.status
       : existing.status;
 
@@ -309,6 +386,7 @@ export class WorkHoursService {
         price,
         total,
         status,
+        isAdditional,
         studentId: data.studentId ?? existing.studentId,
         departmentId: nextDepartmentId,
         periodId: data.periodId ?? existing.periodId,
@@ -321,6 +399,6 @@ export class WorkHoursService {
       },
     });
 
-    return this.sanitizeWorkHours(updated, this.canViewFinancials(user));
+    return this.sanitizeWorkHours(updated, user);
   }
 }
