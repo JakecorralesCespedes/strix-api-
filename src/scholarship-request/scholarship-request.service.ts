@@ -63,17 +63,57 @@ export class ScholarshipRequestService {
     if (!departament) {
       throw new BadRequestException('Department not found');
     }
-    const student = await this.prismaService.student.findUnique({
-      where: {
-        id: data.studentId,
-      },
-    });
-    if (!student) {
-      throw new BadRequestException('Student not found');
+
+    // Resolver el estudiante: por studentId, o por upsert desde (code/email/name)
+    let studentId = data.studentId;
+
+    if (!studentId) {
+      if (!data.code || !data.name || !data.email) {
+        throw new BadRequestException(
+          'Debes proporcionar studentId o los datos del estudiante (name, email, code)',
+        );
+      }
+
+      // Buscar por codigo (carnet) o por email; si existe, reutilizar y actualizar datos
+      const existingStudent = await this.prismaService.student.findFirst({
+        where: {
+          OR: [{ code: data.code }, { email: data.email }],
+        },
+      });
+
+      if (existingStudent) {
+        const updatedStudent = await this.prismaService.student.update({
+          where: { id: existingStudent.id },
+          data: {
+            name: data.name,
+            email: data.email,
+            phone: data.phone ?? existingStudent.phone,
+            code: data.code,
+          },
+        });
+        studentId = updatedStudent.id;
+      } else {
+        const createdStudent = await this.prismaService.student.create({
+          data: {
+            name: data.name,
+            email: data.email,
+            phone: data.phone ?? '',
+            code: data.code,
+          },
+        });
+        studentId = createdStudent.id;
+      }
+    } else {
+      const student = await this.prismaService.student.findUnique({
+        where: { id: studentId },
+      });
+      if (!student) {
+        throw new BadRequestException('Student not found');
+      }
     }
 
     const existing = await this.prismaService.studentOnDepartment.findFirst({
-      where: { studentId: data.studentId, departmentId: data.departmentId },
+      where: { studentId, departmentId: data.departmentId },
     });
     if (existing) {
       throw new BadRequestException(
@@ -91,9 +131,13 @@ export class ScholarshipRequestService {
         },
         student: {
           connect: {
-            id: data.studentId,
+            id: studentId,
           },
         },
+      },
+      include: {
+        student: true,
+        department: true,
       },
     });
   }
@@ -200,23 +244,67 @@ export class ScholarshipRequestService {
       const studentEmail = record.student?.email;
       if (studentEmail) {
         const readableStatus =
-          data.status === 'APPROVED' ? 'aprobada' : 'rechazada';
-        const subject = `Solicitud de horas beca ${readableStatus}`;
+          data.status === 'APPROVED'
+            ? 'APROBADA'
+            : data.status === 'REJECTED'
+              ? 'RECHAZADA'
+              : 'EN REVISION';
+        const subject = `Tu solicitud de horas beca fue ${readableStatus}`;
+        const departmentName =
+          record.department?.name ?? `#${record.departmentId}`;
+        const studentName = record.student?.name ?? 'estudiante';
+        const bodyLine =
+          data.status === 'APPROVED'
+            ? 'Ya puedes comenzar a reportar tus horas a traves del jefe de departamento.'
+            : data.status === 'REJECTED'
+              ? 'Si crees que fue un error, contacta al departamento responsable.'
+              : '';
+
         const text = [
-          `Hola ${record.student?.name ?? 'estudiante'},`,
-          `Tu solicitud de horas beca fue ${readableStatus}.`,
-          `Departamento: ${record.department?.name ?? record.departmentId}.`,
-          `Estado: ${data.status}.`,
-        ].join('\n');
+          `Hola ${studentName},`,
+          '',
+          `Te informamos que tu solicitud de horas beca para el departamento "${departmentName}" fue ${readableStatus}.`,
+          '',
+          bodyLine,
+          '',
+          'Sistema Strix - Gestion de Horas Beca',
+        ]
+          .filter(Boolean)
+          .join('\n');
+
+        const accentColor =
+          data.status === 'APPROVED'
+            ? '#047857'
+            : data.status === 'REJECTED'
+              ? '#b91c1c'
+              : '#1d4ed8';
+        const html = `
+          <div style="font-family:Helvetica,Arial,sans-serif;color:#111827;max-width:560px;margin:auto;">
+            <h2 style="color:${accentColor};margin-bottom:4px;">Solicitud ${readableStatus}</h2>
+            <p>Hola <strong>${escapeHtml(studentName)}</strong>,</p>
+            <p>Tu solicitud de horas beca para el departamento <strong>${escapeHtml(departmentName)}</strong> fue <span style="color:${accentColor};font-weight:600;">${readableStatus}</span>.</p>
+            ${bodyLine ? `<p>${escapeHtml(bodyLine)}</p>` : ''}
+            <p style="margin-top:20px;color:#6b7280;font-size:12px;">Sistema Strix - Gestion de Horas Beca</p>
+          </div>`;
 
         await this.mailerService.sendMail({
           to: studentEmail,
           subject,
           text,
+          html,
         });
       }
     }
 
     return updated;
   }
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }

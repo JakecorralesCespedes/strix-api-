@@ -1,4 +1,12 @@
-import { Controller, Get, Post, Body, Param, Query, Put } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Param,
+  Query,
+  Put,
+} from '@nestjs/common';
 import { PeriodsService } from './periods.service';
 import { CreatePeriodDto } from './dto/create-period.dto';
 import { UpdatePeriodDto } from './dto/update-period.dto';
@@ -43,5 +51,13 @@ export class PeriodsController {
     @Param('id') id: string,
   ): Promise<Period> {
     return this.periodsService.updatePeriod(Number(id), body);
+  }
+
+  @Post(':id/close')
+  @Roles(PERIODS.PERIODS_WRITE)
+  async close(
+    @Param('id') id: string,
+  ): Promise<{ period: Period; emailsSent: number; emailsSkipped: number }> {
+    return this.periodsService.closePeriod(Number(id));
   }
 }

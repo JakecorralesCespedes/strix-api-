@@ -1,6 +1,12 @@
 import { Injectable, Logger } from '@nestjs/common';
 import nodemailer from 'nodemailer';
 
+export type MailAttachment = {
+  filename: string;
+  content: Buffer;
+  contentType?: string;
+};
+
 @Injectable()
 export class MailerService {
   private readonly logger = new Logger(MailerService.name);
@@ -38,6 +44,8 @@ export class MailerService {
     to: string | string[];
     subject: string;
     text: string;
+    html?: string;
+    attachments?: MailAttachment[];
   }): Promise<void> {
     if (!this.transporter || !this.fromAddress) {
       this.logger.warn('Email skipped; SMTP not configured.');
@@ -58,6 +66,8 @@ export class MailerService {
       to: recipients.join(','),
       subject: params.subject,
       text: params.text,
+      html: params.html,
+      attachments: params.attachments,
     });
   }
 }
