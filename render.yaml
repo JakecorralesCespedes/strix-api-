@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: strix-api
+    env: node
+    plan: free
+    branch: main
+    region: oregon
+    buildCommand: "npm install && npm run build && npm run prisma:migrate:deploy"
+    startCommand: "node dist/src/main.js"
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
