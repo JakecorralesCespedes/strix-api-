@@ -1,7 +1,8 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { CreateUserDto } from './dto/create-user.dto';
 import { PrismaService } from '../common/prisma.service';
 import { FirebaseService } from '../common/fireabase.service';
+import { MailerService } from '../common/mailer.service';
 import { UserRecord } from 'firebase-admin/lib/auth/user-record';
 import { Prisma, User } from '@prisma/client';
 import { UpdateUserDto } from './dto/update-user.dto';
@@ -25,10 +26,13 @@ export type UserWithRoleDepartment = Prisma.UserGetPayload<{
 
 @Injectable()
 export class UsersService {
+  private readonly logger = new Logger(UsersService.name);
+
   constructor(
     private readonly prismaService: PrismaService,
     private readonly firebaseService: FirebaseService,
     private readonly rolesService: RolesService,
+    private readonly mailerService: MailerService,
   ) {}
 
   private normalizeDepartmentRoles(
@@ -210,7 +214,25 @@ export class UsersService {
         activeDepartmentId,
         activeRoleId,
       ),
+      include: {
+        role: true,
+        department: true,
+      },
     });
+
+    try {
+      await this.mailerService.sendWelcomeUser({
+        name: user.name,
+        email: user.email,
+        password: createUserDto.password,
+        roleName: user.role?.name ?? role.name,
+        departmentName: user.department?.name ?? '',
+      });
+    } catch (error) {
+      this.logger.warn(
+        `No se pudo enviar el correo de bienvenida a ${user.email}: ${error?.message ?? error}`,
+      );
+    }
 
     return user;
   }

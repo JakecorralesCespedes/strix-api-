@@ -273,6 +273,41 @@ export class WorkHoursService {
     return { count };
   }
 
+  private async resolvePriceForDepartment(
+    departmentId: number,
+    priceId: number | undefined,
+    fallbackPricing: number,
+  ): Promise<{ price: number; priceId: number | null }> {
+    if (priceId) {
+      const priceRow = await this.prismaService.departmentPrice.findUnique({
+        where: { id: priceId },
+      });
+      if (!priceRow) {
+        throw new BadRequestException('El precio seleccionado no existe');
+      }
+      if (priceRow.departmentId !== departmentId) {
+        throw new BadRequestException(
+          'El precio seleccionado no pertenece a este departamento',
+        );
+      }
+      if (!priceRow.active) {
+        throw new BadRequestException('El precio seleccionado está inactivo');
+      }
+      return { price: priceRow.price, priceId: priceRow.id };
+    }
+
+    const activePrices = await this.prismaService.departmentPrice.findMany({
+      where: { departmentId, active: true },
+      orderBy: { id: 'asc' },
+    });
+
+    if (activePrices.length > 0) {
+      return { price: activePrices[0].price, priceId: activePrices[0].id };
+    }
+
+    return { price: Number(fallbackPricing || 0), priceId: null };
+  }
+
   async create(data: CreateWorkHoursDto, user: any): Promise<WorkHoursResponse> {
     await this.checkDepartmentAccess(data.departmentId, user);
 
@@ -304,8 +339,12 @@ export class WorkHoursService {
     const startDate = new Date(data.start);
     const endDate = new Date(data.end);
     const amount = this.calculateAmount(startDate, endDate);
-    const price = Number(department.pricing || 0);
-    const total = amount * price;
+    const resolved = await this.resolvePriceForDepartment(
+      data.departmentId,
+      data.priceId,
+      department.pricing,
+    );
+    const total = amount * resolved.price;
     const status = WorkHoursStatus.PENDING;
 
     const created = await this.prismaService.workHours.create({
@@ -314,7 +353,7 @@ export class WorkHoursService {
         start: startDate,
         end: endDate,
         amount,
-        price,
+        price: resolved.price,
         total,
         status,
         isAdditional: data.isAdditional ?? false,
@@ -322,6 +361,7 @@ export class WorkHoursService {
         studentId: data.studentId,
         departmentId: data.departmentId,
         periodId: data.periodId,
+        priceId: resolved.priceId,
       },
       include: {
         student: true,
@@ -370,8 +410,13 @@ export class WorkHoursService {
     const startDate = data.start ? new Date(data.start) : existing.start;
     const endDate = data.end ? new Date(data.end) : existing.end;
     const amount = this.calculateAmount(startDate, endDate);
-    const price = Number(department.pricing || 0);
-    const total = amount * price;
+    const priceIdInput = data.priceId !== undefined ? data.priceId : existing.priceId ?? undefined;
+    const resolved = await this.resolvePriceForDepartment(
+      nextDepartmentId,
+      priceIdInput ?? undefined,
+      department.pricing,
+    );
+    const total = amount * resolved.price;
     const status = this.canApprove(user, nextDepartmentId)
       ? data.status ?? existing.status
       : existing.status;
@@ -383,13 +428,14 @@ export class WorkHoursService {
         start: startDate,
         end: endDate,
         amount,
-        price,
+        price: resolved.price,
         total,
         status,
         isAdditional,
         studentId: data.studentId ?? existing.studentId,
         departmentId: nextDepartmentId,
         periodId: data.periodId ?? existing.periodId,
+        priceId: resolved.priceId,
       },
       include: {
         student: true,

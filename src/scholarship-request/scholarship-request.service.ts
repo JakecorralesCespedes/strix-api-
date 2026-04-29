@@ -7,13 +7,14 @@ import { CreateScholarshipRequestDto } from './dto/create-scholarship-request.dt
 import { UpdateScholarshipRequestDto } from './dto/update-scholarship-request.dto';
 import { GetScholarshipRequestDto } from './dto/get-scholarship-request.dto';
 import { PrismaService } from '../common/prisma.service';
-import { StudentOnDepartment } from '@prisma/client';
+import { RequestStatus, StudentOnDepartment } from '@prisma/client';
+import { SCHOLARSHIP_REQUESTS } from '../permissions/permissions';
 import {
   PaginatedResponse,
   createPaginatedResponse,
   createPaginationMetadata,
 } from '../utils/pagination.util';
-import { MailerService } from '../common/mailer.service';
+import { MailerService, NOTIFICATION_KEYS } from '../common/mailer.service';
 
 @Injectable()
 export class ScholarshipRequestService {
@@ -123,7 +124,7 @@ export class ScholarshipRequestService {
 
     return this.prismaService.studentOnDepartment.create({
       data: {
-        status: data.status,
+        status: RequestStatus.PENDING,
         department: {
           connect: {
             id: data.departmentId,
@@ -242,7 +243,18 @@ export class ScholarshipRequestService {
 
     if (data.status && data.status !== previousStatus) {
       const studentEmail = record.student?.email;
-      if (studentEmail) {
+      const notificationKey =
+        data.status === 'APPROVED'
+          ? NOTIFICATION_KEYS.SCHOLARSHIP_APPROVED
+          : data.status === 'REJECTED'
+            ? NOTIFICATION_KEYS.SCHOLARSHIP_REJECTED
+            : null;
+
+      const isEnabled = notificationKey
+        ? await this.mailerService.isNotificationEnabled(notificationKey)
+        : false;
+
+      if (studentEmail && isEnabled) {
         const readableStatus =
           data.status === 'APPROVED'
             ? 'APROBADA'

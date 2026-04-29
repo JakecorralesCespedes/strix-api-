@@ -13,9 +13,10 @@ export class CreateScholarshipRequestDto {
   @IsNumber()
   departmentId: number;
 
-  @ApiProperty()
+  @ApiPropertyOptional({ enum: RequestStatus })
+  @IsOptional()
   @IsEnum(RequestStatus)
-  status: RequestStatus;
+  status?: RequestStatus;
 
   // Opcion A: usar un estudiante existente
   @ApiPropertyOptional()

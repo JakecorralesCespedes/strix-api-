@@ -8,7 +8,7 @@ import { PaginatedResponse } from '../utils/pagination.util';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { PaginationParamsPipe } from '../pipes/pagination-params.pipe';
 import { Roles } from '../guards/role.guard';
-import { DEPARTMENTS } from '../permissions/permissions';
+import { DEPARTMENTS, PRICING } from '../permissions/permissions';
 
 @ApiTags('Departments')
 @ApiBearerAuth()
@@ -45,5 +45,14 @@ export class DepartamentsController {
     @Body() body: UpdateDepartamentDto,
   ): Promise<Department> {
     return this.departamentsService.updatedepartament(Number(id), body);
+  }
+
+  @Put(':id/pricing')
+  @Roles(PRICING.PRICING_WRITE)
+  async updatePricing(
+    @Param('id') id: string,
+    @Body() body: { pricing: number },
+  ): Promise<Department> {
+    return this.departamentsService.updatePricing(Number(id), body.pricing);
   }
 }

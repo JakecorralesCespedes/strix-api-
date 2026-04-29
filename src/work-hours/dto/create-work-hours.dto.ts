@@ -44,6 +44,11 @@ export class CreateWorkHoursDto {
 
   @ApiPropertyOptional()
   @IsOptional()
+  @IsNumber()
+  priceId?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
   @IsBoolean()
   isAdditional?: boolean;
 }

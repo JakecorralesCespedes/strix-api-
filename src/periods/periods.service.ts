@@ -17,11 +17,11 @@ import { GetPeriodDto } from './dto/get-period.dto';
 import { MailerService } from '../common/mailer.service';
 import { PdfReportService } from '../common/pdf-report.service';
 
-const DATE_FORMATTER = new Intl.DateTimeFormat('es-DO', {
+const DATE_FORMATTER = new Intl.DateTimeFormat('es-CR', {
   dateStyle: 'medium',
 });
 
-const CURRENCY = new Intl.NumberFormat('es-DO', {
+const CURRENCY = new Intl.NumberFormat('es-CR', {
   minimumFractionDigits: 2,
   maximumFractionDigits: 2,
 });
@@ -41,11 +41,14 @@ export class PeriodsService {
       return this.prismaService.period.create({
         data: {
           name: data.name,
-          start: data.start,
-          end: data.end,
+          start: new Date(data.start),
+          end: new Date(data.end),
         },
       });
     } catch (error) {
+      this.logger.error(
+        `Failed to create period: ${(error as Error).message}`,
+      );
       throw new InternalServerErrorException('Could not be created');
     }
   }
@@ -83,8 +86,8 @@ export class PeriodsService {
       },
       data: {
         name: data.name,
-        start: data.start,
-        end: data.end,
+        start: data.start ? new Date(data.start) : undefined,
+        end: data.end ? new Date(data.end) : undefined,
       },
     });
   }
@@ -187,8 +190,8 @@ export class PeriodsService {
             `Resumen:`,
             `- Departamento: ${bucket.departmentName}`,
             `- Horas aprobadas: ${totalHours.toFixed(2)}`,
-            `- Precio por hora: RD$ ${CURRENCY.format(bucket.hourlyRate)}`,
-            `- Total: RD$ ${CURRENCY.format(totalPay)}`,
+            `- Precio por hora: ₡${CURRENCY.format(bucket.hourlyRate)}`,
+            `- Total: ₡${CURRENCY.format(totalPay)}`,
             '',
             'Adjunto encontraras el detalle dia por dia en PDF.',
             '',
@@ -257,7 +260,7 @@ function buildClosedPeriodEmailHtml(params: {
           <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;">${DATE_FORMATTER.format(row.date)}</td>
           <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;">${escapeHtml(row.description)}</td>
           <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;text-align:right;">${row.hours.toFixed(2)}</td>
-          <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;text-align:right;">RD$ ${CURRENCY.format(row.hours * params.hourlyRate)}</td>
+          <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;text-align:right;">₡${CURRENCY.format(row.hours * params.hourlyRate)}</td>
         </tr>`,
     )
     .join('');
@@ -286,11 +289,11 @@ function buildClosedPeriodEmailHtml(params: {
       </tr>
       <tr>
         <td style="padding:4px 8px;color:#4b5563;">Precio por hora</td>
-        <td style="padding:4px 8px;text-align:right;">RD$ ${CURRENCY.format(params.hourlyRate)}</td>
+        <td style="padding:4px 8px;text-align:right;">₡${CURRENCY.format(params.hourlyRate)}</td>
       </tr>
       <tr>
         <td style="padding:4px 8px;color:#111827;font-weight:600;">Total a recibir</td>
-        <td style="padding:4px 8px;text-align:right;font-weight:700;color:#047857;">RD$ ${CURRENCY.format(params.totalPay)}</td>
+        <td style="padding:4px 8px;text-align:right;font-weight:700;color:#047857;">₡${CURRENCY.format(params.totalPay)}</td>
       </tr>
     </table>
     <p style="margin-top:20px;color:#6b7280;font-size:12px;">Sistema Strix - Gestion de Horas Beca</p>

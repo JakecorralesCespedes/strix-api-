@@ -157,6 +157,25 @@ export class DepartamentsService {
     return this.updateDepartmentWithPricing(id, data);
   }
 
+  async updatePricing(id: number, pricing: number): Promise<Department> {
+    if (typeof pricing !== 'number' || Number.isNaN(pricing) || pricing < 0) {
+      throw new BadRequestException('pricing must be a non-negative number');
+    }
+
+    const department = await this.prismaService.department.findFirst({
+      where: { id },
+    });
+
+    if (!department) {
+      throw new BadRequestException('Department not found');
+    }
+
+    return this.prismaService.department.update({
+      where: { id },
+      data: { pricing },
+    });
+  }
+
   private async updateDepartmentWithPricing(
     id: number,
     data: UpdateDepartamentDto,

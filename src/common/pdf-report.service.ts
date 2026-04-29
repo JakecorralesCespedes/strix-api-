@@ -1,5 +1,11 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import PDFDocument from 'pdfkit';
+import { PrismaService } from './prisma.service';
+import {
+  DEFAULT_PDF_TEMPLATE,
+  PDF_TEMPLATE_KEYS,
+  PdfTemplateConfig,
+} from './pdf-template.config';
 
 export type WorkHoursRow = {
   date: Date;
@@ -18,20 +24,62 @@ export type StudentPeriodReport = {
   rows: WorkHoursRow[];
 };
 
-const CURRENCY = new Intl.NumberFormat('es-DO', {
+const CURRENCY = new Intl.NumberFormat('es-CR', {
   minimumFractionDigits: 2,
   maximumFractionDigits: 2,
 });
 
-const DATE_FORMATTER = new Intl.DateTimeFormat('es-DO', {
+const DATE_FORMATTER = new Intl.DateTimeFormat('es-CR', {
   dateStyle: 'medium',
 });
 
 @Injectable()
 export class PdfReportService {
+  private readonly logger = new Logger(PdfReportService.name);
+
+  constructor(private readonly prismaService: PrismaService) {}
+
+  private async loadTemplate(): Promise<PdfTemplateConfig> {
+    try {
+      const settings = await this.prismaService.globalSetting.findMany({
+        where: { key: { in: [...PDF_TEMPLATE_KEYS] } },
+      });
+      const map = settings.reduce<Record<string, string>>((acc, item) => {
+        acc[item.key] = item.value;
+        return acc;
+      }, {});
+      const result = { ...DEFAULT_PDF_TEMPLATE };
+      for (const key of PDF_TEMPLATE_KEYS) {
+        const stored = map[key];
+        if (typeof stored === 'string' && stored.trim().length > 0) {
+          result[key] = stored;
+        }
+      }
+      return result;
+    } catch (err) {
+      this.logger.warn(
+        `Failed to load PDF template config, using defaults: ${(err as Error).message}`,
+      );
+      return { ...DEFAULT_PDF_TEMPLATE };
+    }
+  }
+
+  private decodeLogo(dataUrl: string): Buffer | null {
+    const match = dataUrl.match(
+      /^data:image\/(png|jpe?g);base64,([A-Za-z0-9+/=]+)$/,
+    );
+    if (!match) return null;
+    try {
+      return Buffer.from(match[2], 'base64');
+    } catch {
+      return null;
+    }
+  }
+
   async renderStudentPeriodReport(
     report: StudentPeriodReport,
   ): Promise<Buffer> {
+    const template = await this.loadTemplate();
     const doc = new PDFDocument({ margin: 48, size: 'LETTER' });
     const chunks: Buffer[] = [];
 
@@ -41,10 +89,48 @@ export class PdfReportService {
       doc.on('error', reject);
     });
 
+    const headerStartY = doc.y;
+    const logoBuffer = template.pdfLogoDataUrl
+      ? this.decodeLogo(template.pdfLogoDataUrl)
+      : null;
+
+    if (logoBuffer) {
+      const logoSize = 60;
+      const logoX = doc.page.width - doc.page.margins.right - logoSize;
+      try {
+        doc.image(logoBuffer, logoX, headerStartY, {
+          fit: [logoSize, logoSize],
+          align: 'right',
+        });
+      } catch (err) {
+        this.logger.warn(
+          `Failed to render PDF logo: ${(err as Error).message}`,
+        );
+      }
+      doc.y = headerStartY;
+    }
+
+    if (template.pdfInstitutionName) {
+      doc
+        .fontSize(11)
+        .fillColor('#6b7280')
+        .text(template.pdfInstitutionName, { align: 'left' });
+    }
+
     doc
       .fontSize(18)
-      .fillColor('#1d4ed8')
-      .text('Reporte de horas beca', { align: 'left' });
+      .fillColor(template.pdfPrimaryColor)
+      .text(template.pdfHeaderTitle || 'Reporte de horas beca', {
+        align: 'left',
+      });
+
+    if (template.pdfHeaderSubtitle) {
+      doc
+        .fontSize(11)
+        .fillColor('#4b5563')
+        .text(template.pdfHeaderSubtitle, { align: 'left' });
+    }
+
     doc
       .fontSize(10)
       .fillColor('#4b5563')
@@ -67,7 +153,7 @@ export class PdfReportService {
     );
     drawPair(
       'Precio por hora',
-      `RD$ ${CURRENCY.format(report.hourlyRate)}`,
+      `₡${CURRENCY.format(report.hourlyRate)}`,
     );
     doc.moveDown(1);
 
@@ -81,7 +167,7 @@ export class PdfReportService {
     doc.text('Fecha', col1X, tableTop);
     doc.text('Descripcion', col2X, tableTop);
     doc.text('Horas', col3X, tableTop, { width: 60, align: 'right' });
-    doc.text('Pago (RD$)', col4X, tableTop, { width: 80, align: 'right' });
+    doc.text('Pago (₡)', col4X, tableTop, { width: 80, align: 'right' });
 
     doc
       .moveTo(col1X, tableTop + 16)
@@ -140,18 +226,34 @@ export class PdfReportService {
       width: 60,
       align: 'right',
     });
-    doc.text(`RD$ ${CURRENCY.format(totalPay)}`, col4X, cursorY, {
+    doc.text(`₡${CURRENCY.format(totalPay)}`, col4X, cursorY, {
       width: 80,
       align: 'right',
     });
 
     cursorY += 40;
+
+    if (template.pdfSignatureLabel) {
+      doc
+        .font('Helvetica')
+        .fontSize(10)
+        .fillColor('#111827')
+        .text('___________________________', labelX, cursorY);
+      cursorY += 14;
+      doc
+        .fontSize(10)
+        .fillColor('#374151')
+        .text(template.pdfSignatureLabel, labelX, cursorY);
+      cursorY += 24;
+    }
+
     doc
       .font('Helvetica')
       .fontSize(9)
       .fillColor('#6b7280')
       .text(
-        'Documento generado automaticamente por Strix al cerrar el periodo. Ante cualquier duda, contacta a tu jefe de departamento.',
+        template.pdfFooterText ||
+          'Documento generado automaticamente por Strix al cerrar el periodo.',
         labelX,
         cursorY,
         { width: 500 },

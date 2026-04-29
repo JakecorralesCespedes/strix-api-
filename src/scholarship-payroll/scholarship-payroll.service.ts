@@ -316,17 +316,11 @@ export class ScholarshipPayrollService {
       return;
     }
 
-    const [departments, mailingList] = await Promise.all([
-      this.prismaService.department.findMany({
-        where: { id: { in: departmentIds } },
-        include: { head: true },
-      }),
-      this.prismaService.mailingList.findMany({ where: { active: true } }),
-    ]);
+    const departments = await this.prismaService.department.findMany({
+      where: { id: { in: departmentIds } },
+      include: { head: true },
+    });
 
-    const mailingEmails = mailingList
-      .map((item) => item.email)
-      .filter(Boolean);
     const departmentMap = new Map(
       departments.map((department) => [department.id, department]),
     );
@@ -340,10 +334,12 @@ export class ScholarshipPayrollService {
     }
 
     for (const [departmentId, departmentItems] of itemsByDepartment.entries()) {
-      const department = departmentMap.get(departmentId);
+      const department = departmentMap.get(departmentId) as
+        | { id: number; name: string; head?: { email?: string } | null }
+        | undefined;
       const headEmail = department?.head?.email;
       const recipients = Array.from(
-        new Set([headEmail, ...mailingEmails].filter(Boolean)),
+        new Set([headEmail].filter(Boolean) as string[]),
       );
 
       if (!recipients.length) {
@@ -351,7 +347,7 @@ export class ScholarshipPayrollService {
       }
 
       const headerLines = [
-        'Aplicacion de horas beca',
+        'Aplicación de horas beca',
         `Departamento: ${department?.name ?? departmentId}`,
         `Periodo: ${period?.name ?? period?.id ?? ''}`,
         `Aplicado por: ${user?.name ?? user?.email ?? user?.id ?? ''}`,
@@ -390,7 +386,7 @@ export class ScholarshipPayrollService {
       }
 
       const text = [...headerLines, ...bodyLines].join('\n');
-      const subject = `Aplicacion de horas beca - ${
+      const subject = `Aplicación de horas beca - ${
         department?.name ?? departmentId
       }`;
 
