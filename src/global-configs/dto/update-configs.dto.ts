@@ -13,3 +13,9 @@ export class UpdateConfigsDto {
   @IsString()
   scolarshipCode: string;
 }
+
+export {
+  PDF_TEMPLATE_KEYS,
+  PdfTemplateKey,
+  PdfTemplateConfig,
+} from '../../common/pdf-template.config';

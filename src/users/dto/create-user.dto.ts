@@ -1,5 +1,16 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsNumber, IsOptional, IsString } from 'class-validator';
+import { Type } from 'class-transformer';
+import { IsNumber, IsOptional, IsString, ValidateNested } from 'class-validator';
+
+export class DepartmentRoleAssignmentDto {
+  @ApiProperty()
+  @IsNumber()
+  departmentId: number;
+
+  @ApiProperty()
+  @IsNumber()
+  roleId: number;
+}
 
 export class CreateUserDto {
   @ApiProperty()
@@ -22,4 +33,15 @@ export class CreateUserDto {
   @IsNumber()
   @IsOptional()
   departmentId?: number;
+
+  @ApiProperty({ required: false, type: [DepartmentRoleAssignmentDto] })
+  @IsOptional()
+  @ValidateNested({ each: true })
+  @Type(() => DepartmentRoleAssignmentDto)
+  departmentRoles?: DepartmentRoleAssignmentDto[];
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsNumber()
+  activeDepartmentId?: number;
 }

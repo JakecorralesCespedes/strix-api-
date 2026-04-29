@@ -1,4 +1,12 @@
-import { Controller, Get, Post, Body, Param, Query, Put } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Param,
+  Query,
+  Put,
+} from '@nestjs/common';
 import { PeriodsService } from './periods.service';
 import { CreatePeriodDto } from './dto/create-period.dto';
 import { UpdatePeriodDto } from './dto/update-period.dto';
@@ -7,6 +15,8 @@ import { PaginatedResponse } from '../utils/pagination.util';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { PaginationParamsPipe } from '../pipes/pagination-params.pipe';
 import { GetPeriodDto } from './dto/get-period.dto';
+import { Roles } from '../guards/role.guard';
+import { PERIODS } from '../permissions/permissions';
 
 @ApiTags('Periods')
 @ApiBearerAuth()
@@ -15,6 +25,7 @@ export class PeriodsController {
   constructor(private readonly periodsService: PeriodsService) {}
 
   @Get()
+  @Roles(PERIODS.PERIODS_READ)
   async findAll(
     @Query(new PaginationParamsPipe()) query: GetPeriodDto,
   ): Promise<PaginatedResponse<Period>> {
@@ -22,20 +33,31 @@ export class PeriodsController {
   }
 
   @Get(':id')
+  @Roles(PERIODS.PERIODS_READ)
   async findOne(@Param('id') id: string): Promise<Period> {
     return this.periodsService.findOne(Number(id));
   }
 
   @Post()
+  @Roles(PERIODS.PERIODS_WRITE)
   async create(@Body() body: CreatePeriodDto): Promise<Period> {
     return this.periodsService.createPeriod(body);
   }
 
   @Put(':id')
+  @Roles(PERIODS.PERIODS_WRITE)
   async update(
     @Body() body: UpdatePeriodDto,
     @Param('id') id: string,
   ): Promise<Period> {
     return this.periodsService.updatePeriod(Number(id), body);
+  }
+
+  @Post(':id/close')
+  @Roles(PERIODS.PERIODS_WRITE)
+  async close(
+    @Param('id') id: string,
+  ): Promise<{ period: Period; emailsSent: number; emailsSkipped: number }> {
+    return this.periodsService.closePeriod(Number(id));
   }
 }

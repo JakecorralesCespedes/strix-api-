@@ -1,287 +1,570 @@
-import { PeriodStatus, PrismaClient } from '@prisma/client';
+import { PeriodStatus, PrismaClient, RequestStatus, WorkHoursStatus } from '@prisma/client';
+import { config } from 'dotenv';
+import * as admin from 'firebase-admin';
+import { getCredentialsFromEnv } from '../src/utils';
+
+config();
 
 const prisma = new PrismaClient();
 
-type PriceItem = {
-  id: number;
-  price: number;
-  active: boolean;
-  createdAt: string;
-  updatedAt: string;
-};
+const ADMIN_EMAIL = 'jakecorrales24@gmail.com';
 
-async function ensureRole(name: string, allowedPermissions: string[]) {
-  const existing = await prisma.role.findFirst({ where: { name } });
-  if (existing) {
-    return existing;
+const ADMIN_PERMISSIONS = [
+  'users.read',
+  'users.write',
+  'students.read',
+  'students.write',
+  'departments.read',
+  'departments.write',
+  'periods.read',
+  'periods.write',
+  'configs.read',
+  'configs.write',
+  'roles.read',
+  'roles.write',
+  'permissions.read',
+  'permissions.write',
+  'pricing.read',
+  'pricing.write',
+  'scholarship.read',
+  'scholarship.write',
+  'work-hours.read',
+  'work-hours.write',
+  'work-hours.approve',
+  'work-hours.financials.read',
+  'work-hours.apply',
+  'reports.read',
+];
+
+const DEPARTMENT_HEAD_PERMISSIONS = [
+  'departments.read',
+  'students.read',
+  'students.write',
+  'scholarship.read',
+  'scholarship.write',
+  'periods.read',
+  'pricing.read',
+  'pricing.write',
+  'work-hours.read',
+  'work-hours.write',
+  'work-hours.approve',
+  'work-hours.financials.read',
+  'work-hours.apply',
+  'reports.read',
+];
+
+const DEPARTMENT_ASSISTANT_PERMISSIONS = [
+  'departments.read',
+  'students.read',
+  'scholarship.read',
+  'periods.read',
+  'work-hours.read',
+  'work-hours.write',
+  'work-hours.apply',
+];
+
+const OPERATOR_PERMISSIONS = [
+  'users.read',
+  'students.read',
+  'students.write',
+  'departments.read',
+  'periods.read',
+  'configs.read',
+  'scholarship.read',
+  'work-hours.read',
+  'work-hours.financials.read',
+  'reports.read',
+];
+
+const SUPPORT_PERMISSIONS = [
+  'users.read',
+  'departments.read',
+  'scholarship.read',
+  'work-hours.read',
+];
+
+async function findExistingAdmin() {
+  const admin = await prisma.user.findFirst({
+    where: { email: ADMIN_EMAIL },
+  });
+  return admin;
+}
+
+async function cleanDatabase() {
+  console.log('Limpiando base de datos...');
+  await prisma.workHours.deleteMany();
+  await prisma.scholarshipPayroll.deleteMany();
+  await prisma.timeEntry.deleteMany();
+  await prisma.studentOnDepartment.deleteMany();
+  await prisma.userDepartment.deleteMany();
+  await prisma.student.deleteMany();
+  await prisma.department.updateMany({ data: { headId: null } });
+  await prisma.user.deleteMany();
+  await prisma.departmentPrice.deleteMany();
+  await prisma.department.deleteMany();
+  await prisma.role.deleteMany();
+  await prisma.period.deleteMany();
+  // No borramos globalSetting para mantener configuración de PDF/notifs si existe.
+  console.log('Base de datos limpia.');
+}
+
+function ensureFirebaseInit() {
+  const credentials = getCredentialsFromEnv();
+  if (!credentials) {
+    return false;
   }
+  if (!admin.apps.length) {
+    admin.initializeApp({
+      credential: admin.credential.cert(credentials as admin.ServiceAccount),
+    });
+  }
+  return true;
+}
 
-  return prisma.role.create({
-    data: {
-      name,
+async function refreshFirebaseClaims(uuid: string, allowedPermissions: string[], roleId: number) {
+  if (!ensureFirebaseInit()) {
+    console.warn('Sin credenciales Firebase. Omitiendo actualización de claims.');
+    return;
+  }
+  try {
+    await admin.auth().setCustomUserClaims(uuid, {
       allowedPermissions,
-    },
-  });
-}
-
-async function ensureDepartment(name: string, code: string, pricing: number) {
-  const existing = await prisma.department.findFirst({ where: { code } });
-  if (existing) {
-    return existing;
-  }
-
-  return prisma.department.create({
-    data: {
-      name,
-      code,
-      pricing,
-    },
-  });
-}
-
-async function ensureUser(params: {
-  uuid: string;
-  name: string;
-  email: string;
-  phone: string;
-  roleId: number;
-  departmentId: number;
-}) {
-  const existing = await prisma.user.findUnique({ where: { uuid: params.uuid } });
-  if (existing) {
-    return prisma.user.update({
-      where: { uuid: params.uuid },
-      data: {
-        name: params.name,
-        email: params.email,
-        phone: params.phone,
-        roleId: params.roleId,
-        departmentId: params.departmentId,
-      },
-    });
-  }
-
-  const { uuid, name, email, phone, roleId, departmentId } = params;
-  return prisma.user.create({
-    data: {
-      uuid,
-      name,
-      email,
-      phone,
       roleId,
-      departmentId,
-    },
-  });
-}
-
-async function ensureMailing(name: string, email: string, active = true) {
-  const existing = await prisma.mailingList.findFirst({ where: { email } });
-  if (existing) {
-    return prisma.mailingList.update({
-      where: { id: existing.id },
-      data: { name, active },
     });
+  } catch (error: any) {
+    console.warn(`No se pudieron actualizar claims para ${uuid}: ${error?.message ?? error}`);
   }
-
-  return prisma.mailingList.create({
-    data: { name, email, active },
-  });
 }
 
-async function ensurePeriod(name: string, start: Date, end: Date, status: PeriodStatus) {
-  const existing = await prisma.period.findFirst({ where: { name } });
-  if (existing) {
-    return prisma.period.update({
-      where: { id: existing.id },
-      data: { start, end, status },
+async function ensureFirebaseUser(params: {
+  email: string;
+  password: string;
+  name: string;
+}): Promise<string | null> {
+  if (!ensureFirebaseInit()) {
+    return null;
+  }
+  try {
+    const existing = await admin.auth().getUserByEmail(params.email);
+    return existing.uid;
+  } catch (error: any) {
+    if (error?.code !== 'auth/user-not-found') {
+      console.warn(`Error consultando usuario ${params.email}: ${error?.message ?? error}`);
+      return null;
+    }
+  }
+
+  try {
+    const created = await admin.auth().createUser({
+      email: params.email,
+      password: params.password,
+      displayName: params.name,
     });
+    return created.uid;
+  } catch (error: any) {
+    console.warn(`No se pudo crear ${params.email}: ${error?.message ?? error}`);
+    return null;
   }
-
-  return prisma.period.create({
-    data: { name, start, end, status },
-  });
-}
-
-async function ensureStudent(name: string, email: string, phone: string, code: string) {
-  const existing = await prisma.student.findFirst({ where: { code } });
-  if (existing) {
-    return prisma.student.update({
-      where: { id: existing.id },
-      data: { name, email, phone },
-    });
-  }
-
-  return prisma.student.create({
-    data: { name, email, phone, code },
-  });
-}
-
-async function ensureStudentDepartment(studentId: number, departmentId: number) {
-  const existing = await prisma.studentOnDepartment.findFirst({
-    where: { studentId, departmentId },
-  });
-
-  if (existing) {
-    return existing;
-  }
-
-  return prisma.studentOnDepartment.create({
-    data: { studentId, departmentId },
-  });
-}
-
-async function upsertConfig(key: string, value: string) {
-  await prisma.globalSetting.upsert({
-    where: { key },
-    update: { value },
-    create: { key, value },
-  });
 }
 
 async function main() {
-  const now = new Date();
+  const existingAdmin = await findExistingAdmin();
 
-  const adminRole = await ensureRole('Admin', [
-    'users.read',
-    'users.write',
-    'departments.read',
-    'departments.write',
-    'periods.read',
-    'periods.write',
-    'configs.read',
-    'configs.write',
-    'roles.read',
-    'roles.write',
-    'permissions.read',
-    'permissions.write',
-    'pricing.read',
-    'pricing.write',
-    'scholarship.read',
-    'scholarship.write',
-    'work-hours.read',
-    'work-hours.write',
-    'time-entries.read',
-    'time-entries.write',
-    'reports.read',
-  ]);
+  if (!existingAdmin) {
+    console.warn(
+      `No se encontró un usuario con correo ${ADMIN_EMAIL}. Si es la primera vez, créalo manualmente desde Firebase y vuelve a correr el seed.`,
+    );
+  }
 
-  const operatorRole = await ensureRole('Operator', [
-    'users.read',
-    'departments.read',
-    'periods.read',
-    'configs.read',
-    'scholarship.read',
-    'work-hours.read',
-    'time-entries.read',
-    'reports.read',
-  ]);
+  const adminUuid = existingAdmin?.uuid;
+  const adminName = existingAdmin?.name ?? 'Administrador';
+  const adminPhone = existingAdmin?.phone ?? '';
 
-  const supportRole = await ensureRole('Support', [
-    'users.read',
-    'departments.read',
-    'scholarship.read',
-    'work-hours.read',
-    'time-entries.read',
-  ]);
+  await cleanDatabase();
 
-  const priceList: PriceItem[] = [
+  console.log('Creando roles...');
+  const adminRole = await prisma.role.create({
+    data: { name: 'Admin', allowedPermissions: ADMIN_PERMISSIONS },
+  });
+  const departmentHeadRole = await prisma.role.create({
+    data: { name: 'Jefe de Departamento', allowedPermissions: DEPARTMENT_HEAD_PERMISSIONS },
+  });
+  const assistantRole = await prisma.role.create({
+    data: { name: 'Asistente de Departamento', allowedPermissions: DEPARTMENT_ASSISTANT_PERMISSIONS },
+  });
+  const operatorRole = await prisma.role.create({
+    data: { name: 'Operador', allowedPermissions: OPERATOR_PERMISSIONS },
+  });
+  const supportRole = await prisma.role.create({
+    data: { name: 'Soporte', allowedPermissions: SUPPORT_PERMISSIONS },
+  });
+
+  console.log('Creando departamentos...');
+  const desarrollo = await prisma.department.create({
+    data: { name: 'Desarrollo', code: 'DEV', pricing: 1500 },
+  });
+  const operaciones = await prisma.department.create({
+    data: { name: 'Operaciones', code: 'OPS', pricing: 1200 },
+  });
+  const biblioteca = await prisma.department.create({
+    data: { name: 'Biblioteca', code: 'BIB', pricing: 1000 },
+  });
+  const soporte = await prisma.department.create({
+    data: { name: 'Soporte', code: 'SUP', pricing: 1100 },
+  });
+
+  console.log('Creando precios por departamento...');
+  await prisma.departmentPrice.createMany({
+    data: [
+      { departmentId: desarrollo.id, label: 'Desarrollador junior', price: 1500, active: true },
+      { departmentId: desarrollo.id, label: 'Desarrollador avanzado', price: 2000, active: true },
+      { departmentId: desarrollo.id, label: 'Líder técnico', price: 2500, active: true },
+      { departmentId: operaciones.id, label: 'Auxiliar', price: 1000, active: true },
+      { departmentId: operaciones.id, label: 'Coordinador', price: 1300, active: true },
+      { departmentId: biblioteca.id, label: 'Tarifa estándar', price: 1000, active: true },
+      { departmentId: biblioteca.id, label: 'Tarifa nocturna', price: 1200, active: true },
+      { departmentId: soporte.id, label: 'Tarifa estándar', price: 1100, active: true },
+    ],
+  });
+
+  console.log('Creando periodos...');
+  const periodoActivo = await prisma.period.create({
+    data: {
+      name: 'Periodo 2026-1',
+      start: new Date('2026-01-01T00:00:00.000Z'),
+      end: new Date('2026-06-30T23:59:59.999Z'),
+      status: PeriodStatus.ACTIVE,
+    },
+  });
+  await prisma.period.create({
+    data: {
+      name: 'Periodo 2026-2',
+      start: new Date('2026-07-01T00:00:00.000Z'),
+      end: new Date('2026-12-31T23:59:59.999Z'),
+      status: PeriodStatus.PENDING,
+    },
+  });
+  await prisma.period.create({
+    data: {
+      name: 'Periodo 2025-2',
+      start: new Date('2025-07-01T00:00:00.000Z'),
+      end: new Date('2025-12-31T23:59:59.999Z'),
+      status: PeriodStatus.FINISHED,
+    },
+  });
+
+  console.log('Creando configuración global...');
+  const settings = [
+    { key: 'defaultPrice', value: '1200' },
+    { key: 'studentsCode', value: 'EST-' },
+    { key: 'scolarshipCode', value: 'BEC-' },
+    { key: 'tithCode', value: 'DT-' },
+    { key: 'notify.user.welcome', value: 'true' },
+    { key: 'notify.user.passwordReset', value: 'true' },
+    { key: 'notify.scholarship.approved', value: 'true' },
+    { key: 'notify.scholarship.rejected', value: 'true' },
+    { key: 'notify.workHours.approved', value: 'true' },
+  ];
+  for (const setting of settings) {
+    await prisma.globalSetting.upsert({
+      where: { key: setting.key },
+      update: { value: setting.value },
+      create: setting,
+    });
+  }
+
+  if (adminUuid) {
+    console.log('Recreando admin...');
+    const adminUser = await prisma.user.create({
+      data: {
+        uuid: adminUuid,
+        name: adminName,
+        email: ADMIN_EMAIL,
+        phone: adminPhone,
+        roleId: adminRole.id,
+        departmentId: desarrollo.id,
+        departmentRoles: {
+          create: [
+            { departmentId: desarrollo.id, roleId: adminRole.id },
+            { departmentId: operaciones.id, roleId: adminRole.id },
+            { departmentId: biblioteca.id, roleId: adminRole.id },
+            { departmentId: soporte.id, roleId: adminRole.id },
+          ],
+        },
+      },
+    });
+    await refreshFirebaseClaims(adminUuid, ADMIN_PERMISSIONS, adminRole.id);
+    console.log(`Admin recreado: ${adminUser.email}`);
+  }
+
+  console.log('Creando usuarios de prueba...');
+  const TEST_PASSWORD = process.env.SEED_USER_PASSWORD || 'Strix2026!';
+
+  const testUserDefs = [
     {
-      id: 1,
-      price: 80,
-      active: true,
-      createdAt: now.toISOString(),
-      updatedAt: now.toISOString(),
+      email: 'jefe.dev@strix.local',
+      name: 'Jefe Desarrollo',
+      phone: '+506 8100-0001',
+      role: departmentHeadRole,
+      departments: [desarrollo],
     },
     {
-      id: 2,
-      price: 120,
-      active: true,
-      createdAt: now.toISOString(),
-      updatedAt: now.toISOString(),
+      email: 'jefe.ops@strix.local',
+      name: 'Jefe Operaciones',
+      phone: '+506 8100-0002',
+      role: departmentHeadRole,
+      departments: [operaciones],
+    },
+    {
+      email: 'asistente.dev@strix.local',
+      name: 'Asistente Desarrollo',
+      phone: '+506 8100-0003',
+      role: assistantRole,
+      departments: [desarrollo],
+    },
+    {
+      email: 'operador@strix.local',
+      name: 'Operador General',
+      phone: '+506 8100-0004',
+      role: operatorRole,
+      departments: [desarrollo, operaciones, biblioteca, soporte],
     },
   ];
 
-  await upsertConfig('defaultPrice', '80');
-  await upsertConfig('studentsCode', 'EST-');
-  await upsertConfig('scolarshipCode', 'BEC-');
-  await upsertConfig('tithCode', 'DT-');
-  await upsertConfig('prices', JSON.stringify(priceList));
+  const createdTestUsers: Array<{ email: string; userId: number }> = [];
 
-  const devDepartment = await ensureDepartment('Desarrollo', 'DEV', 120);
-  const opsDepartment = await ensureDepartment('Operaciones', 'OPS', 80);
-  const supportDepartment = await ensureDepartment('Soporte', 'SUP', 80);
+  for (const def of testUserDefs) {
+    const uuid = await ensureFirebaseUser({
+      email: def.email,
+      password: TEST_PASSWORD,
+      name: def.name,
+    });
 
-  await ensurePeriod(
-    'Periodo 2026-1',
-    new Date('2026-01-01T00:00:00.000Z'),
-    new Date('2026-06-30T23:59:59.999Z'),
-    PeriodStatus.ACTIVE,
-  );
+    if (!uuid) {
+      console.warn(
+        `Saltando usuario de prueba ${def.email} porque Firebase no está disponible.`,
+      );
+      continue;
+    }
 
-  await ensurePeriod(
-    'Periodo 2026-2',
-    new Date('2026-07-01T00:00:00.000Z'),
-    new Date('2026-12-31T23:59:59.999Z'),
-    PeriodStatus.PENDING,
-  );
+    const created = await prisma.user.create({
+      data: {
+        uuid,
+        name: def.name,
+        email: def.email,
+        phone: def.phone,
+        roleId: def.role.id,
+        departmentId: def.departments[0].id,
+        departmentRoles: {
+          create: def.departments.map((department) => ({
+            departmentId: department.id,
+            roleId: def.role.id,
+          })),
+        },
+      },
+    });
 
-  await ensureMailing('Admin Strix', 'admin@strix.local', true);
-  await ensureMailing('Soporte Strix', 'soporte@strix.local', true);
-  await ensureMailing('Notificaciones', 'notificaciones@strix.local', true);
+    await refreshFirebaseClaims(uuid, def.role.allowedPermissions, def.role.id);
+    createdTestUsers.push({ email: def.email, userId: created.id });
+  }
 
-  const adminUser = await ensureUser({
-    uuid: 'seed-admin-uuid',
-    name: 'Admin Demo',
-    email: 'admin@strix.local',
-    phone: '809-000-0001',
-    roleId: adminRole.id,
-    departmentId: devDepartment.id,
+  console.log(`Usuarios de prueba creados (contraseña: ${TEST_PASSWORD}):`);
+  for (const u of createdTestUsers) {
+    console.log(` - ${u.email}`);
+  }
+
+  // Asignar el primer jefe creado como head de Desarrollo
+  const jefeDev = createdTestUsers.find((u) => u.email === 'jefe.dev@strix.local');
+  if (jefeDev) {
+    await prisma.department.update({
+      where: { id: desarrollo.id },
+      data: { headId: jefeDev.userId },
+    });
+  }
+  const jefeOps = createdTestUsers.find((u) => u.email === 'jefe.ops@strix.local');
+  if (jefeOps) {
+    await prisma.department.update({
+      where: { id: operaciones.id },
+      data: { headId: jefeOps.userId },
+    });
+  }
+
+  console.log('Creando estudiantes de prueba...');
+  const estudiantes = await Promise.all([
+    prisma.student.create({
+      data: {
+        name: 'Juan Pérez',
+        email: 'juan.perez@universidad.edu',
+        phone: '+506 8000-0001',
+        code: 'EST-2026-0001',
+      },
+    }),
+    prisma.student.create({
+      data: {
+        name: 'María Gómez',
+        email: 'maria.gomez@universidad.edu',
+        phone: '+506 8000-0002',
+        code: 'EST-2026-0002',
+      },
+    }),
+    prisma.student.create({
+      data: {
+        name: 'Carlos Rojas',
+        email: 'carlos.rojas@universidad.edu',
+        phone: '+506 8000-0003',
+        code: 'EST-2026-0003',
+      },
+    }),
+    prisma.student.create({
+      data: {
+        name: 'Ana Vargas',
+        email: 'ana.vargas@universidad.edu',
+        phone: '+506 8000-0004',
+        code: 'EST-2026-0004',
+      },
+    }),
+    prisma.student.create({
+      data: {
+        name: 'Luis Morales',
+        email: 'luis.morales@universidad.edu',
+        phone: '+506 8000-0005',
+        code: 'EST-2026-0005',
+      },
+    }),
+    prisma.student.create({
+      data: {
+        name: 'Sofía Castillo',
+        email: 'sofia.castillo@universidad.edu',
+        phone: '+506 8000-0006',
+        code: 'EST-2026-0006',
+      },
+    }),
+  ]);
+
+  console.log('Asignando estudiantes a departamentos...');
+  await prisma.studentOnDepartment.createMany({
+    data: [
+      { studentId: estudiantes[0].id, departmentId: desarrollo.id, status: RequestStatus.APPROVED },
+      { studentId: estudiantes[1].id, departmentId: desarrollo.id, status: RequestStatus.APPROVED },
+      { studentId: estudiantes[2].id, departmentId: operaciones.id, status: RequestStatus.APPROVED },
+      { studentId: estudiantes[3].id, departmentId: biblioteca.id, status: RequestStatus.PENDING },
+      { studentId: estudiantes[4].id, departmentId: biblioteca.id, status: RequestStatus.APPROVED },
+      { studentId: estudiantes[5].id, departmentId: soporte.id, status: RequestStatus.PENDING },
+    ],
   });
 
-  await ensureUser({
-    uuid: 'seed-operator-uuid',
-    name: 'Operador Demo',
-    email: 'operator@strix.local',
-    phone: '809-000-0002',
-    roleId: operatorRole.id,
-    departmentId: opsDepartment.id,
-  });
+  if (adminUuid) {
+    console.log('Creando registros de horas de prueba...');
+    const adminUser = await prisma.user.findFirst({ where: { email: ADMIN_EMAIL } });
+    if (adminUser) {
+      const devPrices = await prisma.departmentPrice.findMany({
+        where: { departmentId: desarrollo.id, active: true },
+        orderBy: { id: 'asc' },
+      });
+      const opsPrices = await prisma.departmentPrice.findMany({
+        where: { departmentId: operaciones.id, active: true },
+        orderBy: { id: 'asc' },
+      });
 
-  await ensureUser({
-    uuid: 'seed-support-uuid',
-    name: 'Soporte Demo',
-    email: 'support@strix.local',
-    phone: '809-000-0003',
-    roleId: supportRole.id,
-    departmentId: supportDepartment.id,
-  });
+      const baseDate = new Date('2026-03-01T08:00:00.000Z');
+      const oneHour = 60 * 60 * 1000;
 
-  const studentOne = await ensureStudent(
-    'Juan Perez',
-    'juan.perez@strix.local',
-    '809-100-0001',
-    'EST-0001',
+      // Hora aprobada para Juan en Desarrollo
+      const startA = new Date(baseDate);
+      const endA = new Date(baseDate.getTime() + 4 * oneHour);
+      await prisma.workHours.create({
+        data: {
+          name: 'Sesión de tutoría',
+          start: startA,
+          end: endA,
+          amount: 4,
+          price: devPrices[0]?.price ?? desarrollo.pricing,
+          total: 4 * (devPrices[0]?.price ?? desarrollo.pricing),
+          status: WorkHoursStatus.APPROVED,
+          isAdditional: false,
+          registedBy: adminUser.id,
+          studentId: estudiantes[0].id,
+          departmentId: desarrollo.id,
+          priceId: devPrices[0]?.id ?? null,
+          periodId: periodoActivo.id,
+        },
+      });
+
+      // Hora pendiente para María en Desarrollo
+      const startB = new Date(baseDate.getTime() + 24 * oneHour);
+      const endB = new Date(startB.getTime() + 3 * oneHour);
+      await prisma.workHours.create({
+        data: {
+          name: 'Laboratorio',
+          start: startB,
+          end: endB,
+          amount: 3,
+          price: devPrices[1]?.price ?? desarrollo.pricing,
+          total: 3 * (devPrices[1]?.price ?? desarrollo.pricing),
+          status: WorkHoursStatus.PENDING,
+          isAdditional: false,
+          registedBy: adminUser.id,
+          studentId: estudiantes[1].id,
+          departmentId: desarrollo.id,
+          priceId: devPrices[1]?.id ?? null,
+          periodId: periodoActivo.id,
+        },
+      });
+
+      // Hora aprobada para Carlos en Operaciones
+      const startC = new Date(baseDate.getTime() + 48 * oneHour);
+      const endC = new Date(startC.getTime() + 5 * oneHour);
+      await prisma.workHours.create({
+        data: {
+          name: 'Inventario',
+          start: startC,
+          end: endC,
+          amount: 5,
+          price: opsPrices[0]?.price ?? operaciones.pricing,
+          total: 5 * (opsPrices[0]?.price ?? operaciones.pricing),
+          status: WorkHoursStatus.APPROVED,
+          isAdditional: false,
+          registedBy: adminUser.id,
+          studentId: estudiantes[2].id,
+          departmentId: operaciones.id,
+          priceId: opsPrices[0]?.id ?? null,
+          periodId: periodoActivo.id,
+        },
+      });
+
+      // Hora rechazada para Carlos
+      const startD = new Date(baseDate.getTime() + 72 * oneHour);
+      const endD = new Date(startD.getTime() + 2 * oneHour);
+      await prisma.workHours.create({
+        data: {
+          name: 'Limpieza',
+          start: startD,
+          end: endD,
+          amount: 2,
+          price: opsPrices[1]?.price ?? operaciones.pricing,
+          total: 2 * (opsPrices[1]?.price ?? operaciones.pricing),
+          status: WorkHoursStatus.REJECTED,
+          isAdditional: false,
+          registedBy: adminUser.id,
+          studentId: estudiantes[2].id,
+          departmentId: operaciones.id,
+          priceId: opsPrices[1]?.id ?? null,
+          periodId: periodoActivo.id,
+        },
+      });
+    }
+  }
+
+  console.log('Seed completado.');
+  console.log(`Roles: Admin=${adminRole.id}, Jefe=${departmentHeadRole.id}, Asistente=${assistantRole.id}, Operador=${operatorRole.id}, Soporte=${supportRole.id}`);
+  console.log(
+    `Departamentos: Desarrollo=${desarrollo.id}, Operaciones=${operaciones.id}, Biblioteca=${biblioteca.id}, Soporte=${soporte.id}`,
   );
-
-  const studentTwo = await ensureStudent(
-    'Maria Gomez',
-    'maria.gomez@strix.local',
-    '809-100-0002',
-    'EST-0002',
-  );
-
-  await ensureStudentDepartment(studentOne.id, devDepartment.id);
-  await ensureStudentDepartment(studentTwo.id, opsDepartment.id);
-
-  console.log('Seed completed');
-  console.log(`Roles: ${adminRole.id}, ${operatorRole.id}, ${supportRole.id}`);
-  console.log(`Departments: ${devDepartment.id}, ${opsDepartment.id}, ${supportDepartment.id}`);
-  console.log(`Users: ${adminUser.email} and test users created/updated`);
 }
 
 main()
   .catch((error) => {
-    console.error('Seed failed:', error);
+    console.error('El seed falló:', error);
     process.exit(1);
   })
   .finally(async () => {

@@ -94,27 +94,58 @@ export class DepartamentsService {
 
   async findAll(
     query: GetDepartamentDto,
+    user?: any,
   ): Promise<PaginatedResponse<Department>> {
     const { page = 1, size = 10 } = query;
     const { take, skip } = createPaginationMetadata(page, size);
     const prismaQuery = {
       take,
       skip,
+      where: {} as Record<string, unknown>,
       include: {
         users: true,
+        head: true,
       },
     };
+
+    if (user?.role?.name !== 'Admin') {
+      const allowedDepartmentIds = (user?.departmentRoles ?? []).map(
+        (item) => item.departmentId,
+      );
+      if (!allowedDepartmentIds.length && user?.departmentId) {
+        allowedDepartmentIds.push(user.departmentId);
+      }
+
+      prismaQuery.where = {
+        id: { in: allowedDepartmentIds.length ? allowedDepartmentIds : [-1] },
+      };
+    }
     const [departament, total] = await Promise.all([
       this.prismaService.department.findMany(prismaQuery),
-      this.prismaService.department.count(),
+      this.prismaService.department.count({ where: prismaQuery.where }),
     ]);
     return createPaginatedResponse<Department>(departament, total, page, size);
   }
 
-  findOne(id: number) {
+  async findOne(id: number, user?: any) {
+    if (user?.role?.name !== 'Admin') {
+      const allowedDepartmentIds = (user?.departmentRoles ?? []).map(
+        (item) => item.departmentId,
+      );
+      if (!allowedDepartmentIds.length && user?.departmentId) {
+        allowedDepartmentIds.push(user.departmentId);
+      }
+      if (!allowedDepartmentIds.includes(id)) {
+        throw new BadRequestException('Not allowed for this department');
+      }
+    }
+
     return this.prismaService.department.findFirst({
       where: {
         id,
+      },
+      include: {
+        head: true,
       },
     });
   }
@@ -126,21 +157,74 @@ export class DepartamentsService {
     return this.updateDepartmentWithPricing(id, data);
   }
 
+  async updatePricing(id: number, pricing: number): Promise<Department> {
+    if (typeof pricing !== 'number' || Number.isNaN(pricing) || pricing < 0) {
+      throw new BadRequestException('pricing must be a non-negative number');
+    }
+
+    const department = await this.prismaService.department.findFirst({
+      where: { id },
+    });
+
+    if (!department) {
+      throw new BadRequestException('Department not found');
+    }
+
+    return this.prismaService.department.update({
+      where: { id },
+      data: { pricing },
+    });
+  }
+
   private async updateDepartmentWithPricing(
     id: number,
     data: UpdateDepartamentDto,
   ): Promise<Department> {
     const pricing = await this.resolvePricing(data, id);
+    const headId = await this.resolveHeadId(data.headId, id);
+
+    const updateData: Record<string, unknown> = {
+      name: data.name,
+      code: data.code,
+      pricing,
+    };
+
+    if (headId !== undefined) {
+      updateData.headId = headId;
+    }
 
     return this.prismaService.department.update({
       where: {
         id,
       },
-      data: {
-        name: data.name,
-        code: data.code,
-        pricing,
-      },
+      data: updateData,
     });
+  }
+
+  private async resolveHeadId(
+    headId: number | null | undefined,
+    departmentId: number,
+  ): Promise<number | null | undefined> {
+    if (headId === undefined) {
+      return undefined;
+    }
+
+    if (headId === null) {
+      return null;
+    }
+
+    const user = await this.prismaService.user.findFirst({
+      where: { id: headId },
+    });
+
+    if (!user) {
+      throw new BadRequestException('Head user not found');
+    }
+
+    if (user.departmentId !== departmentId) {
+      throw new BadRequestException('Head user must belong to this department');
+    }
+
+    return headId;
   }
 }

@@ -3,6 +3,10 @@ export enum USERS {
   USERS_WRITE = 'users.write',
   USERS_DELETE = 'users.delete',
 }
+export enum STUDENTS {
+  STUDENTS_READ = 'students.read',
+  STUDENTS_WRITE = 'students.write',
+}
 export enum DEPARTMENTS {
   DEPARTMENTS_READ = 'departments.read',
   DEPARTMENTS_WRITE = 'departments.write',
@@ -47,11 +51,9 @@ export enum SCHOLARSHIP_REQUESTS {
 export enum WORK_HOURS {
   WORK_HOURS_READ = 'work-hours.read',
   WORK_HOURS_WRITE = 'work-hours.write',
-}
-
-export enum TIME_ENTRIES {
-  TIME_ENTRIES_READ = 'time-entries.read',
-  TIME_ENTRIES_WRITE = 'time-entries.write',
+  WORK_HOURS_APPROVE = 'work-hours.approve',
+  WORK_HOURS_FINANCIALS_READ = 'work-hours.financials.read',
+  WORK_HOURS_APPLY = 'work-hours.apply',
 }
 
 export enum REPORTS {
@@ -60,6 +62,7 @@ export enum REPORTS {
 
 export type ADMIN =
   | USERS
+  | STUDENTS
   | ROLES
   | DEPARTMENTS
   | PERIODS
@@ -69,5 +72,4 @@ export type ADMIN =
   | PRICING
   | SCHOLARSHIP_REQUESTS
   | WORK_HOURS
-  | TIME_ENTRIES
   | REPORTS;

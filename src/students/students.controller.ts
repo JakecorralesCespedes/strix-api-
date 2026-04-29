@@ -7,6 +7,8 @@ import { Student } from '@prisma/client';
 import { PaginatedResponse } from '../utils/pagination.util';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { PaginationParamsPipe } from '../pipes/pagination-params.pipe';
+import { Roles } from '../guards/role.guard';
+import { STUDENTS } from '../permissions/permissions';
 
 @ApiTags('Students')
 @ApiBearerAuth()
@@ -15,6 +17,7 @@ export class StudentsController {
   constructor(private readonly studentsService: StudentsService) {}
 
   @Get()
+  @Roles(STUDENTS.STUDENTS_READ)
   async findAll(
     @Query(new PaginationParamsPipe()) query: GetStudentsDto,
   ): Promise<PaginatedResponse<Student>> {
@@ -22,11 +25,13 @@ export class StudentsController {
   }
 
   @Post()
+  @Roles(STUDENTS.STUDENTS_WRITE)
   async create(@Body() body: CreateStudentDto): Promise<Student> {
     return this.studentsService.createStudents(body);
   }
 
   @Put(':id')
+  @Roles(STUDENTS.STUDENTS_WRITE)
   async update(
     @Param('id') id: string,
     @Body() body: UpdateStudentDto,

@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Put, Query } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Put, Query, Req } from '@nestjs/common';
 import { DepartamentsService } from './departaments.service';
 import { CreateDepartamentDto } from './dto/create-departament.dto';
 import { UpdateDepartamentDto } from './dto/update-departament.dto';
@@ -7,6 +7,8 @@ import { Department } from '@prisma/client';
 import { PaginatedResponse } from '../utils/pagination.util';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { PaginationParamsPipe } from '../pipes/pagination-params.pipe';
+import { Roles } from '../guards/role.guard';
+import { DEPARTMENTS, PRICING } from '../permissions/permissions';
 
 @ApiTags('Departments')
 @ApiBearerAuth()
@@ -15,28 +17,42 @@ export class DepartamentsController {
   constructor(private readonly departamentsService: DepartamentsService) {}
 
   @Get()
+  @Roles(DEPARTMENTS.DEPARTMENTS_READ)
   async findAll(
     @Query(new PaginationParamsPipe()) query: GetDepartamentDto,
+    @Req() req,
   ): Promise<PaginatedResponse<Department>> {
-    return this.departamentsService.findAll(query);
+    return this.departamentsService.findAll(query, req.user);
   }
 
   @Get(':id')
-  async findOne(@Param('id') id: string): Promise<Department> {
-    return this.departamentsService.findOne(Number(id));
+  @Roles(DEPARTMENTS.DEPARTMENTS_READ)
+  async findOne(@Param('id') id: string, @Req() req): Promise<Department> {
+    return this.departamentsService.findOne(Number(id), req.user);
   }
 
   @Post()
+  @Roles(DEPARTMENTS.DEPARTMENTS_WRITE)
   async create(@Body() body: CreateDepartamentDto): Promise<Department> {
     console.log('◉ ▶ DepartamentsController ▶ create ▶ body:', body);
     return this.departamentsService.createDepartamet(body);
   }
 
   @Put(':id')
+  @Roles(DEPARTMENTS.DEPARTMENTS_WRITE)
   async update(
     @Param('id') id: string,
     @Body() body: UpdateDepartamentDto,
   ): Promise<Department> {
     return this.departamentsService.updatedepartament(Number(id), body);
+  }
+
+  @Put(':id/pricing')
+  @Roles(PRICING.PRICING_WRITE)
+  async updatePricing(
+    @Param('id') id: string,
+    @Body() body: { pricing: number },
+  ): Promise<Department> {
+    return this.departamentsService.updatePricing(Number(id), body.pricing);
   }
 }

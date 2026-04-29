@@ -44,15 +44,6 @@ model GlobalSetting {
   updatedAt DateTime @updatedAt
 }
 
-model MailingList {
-  id        Int      @id @default(autoincrement())
-  name      String
-  email     String
-  active    Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-}
-
 model Period {
   id        Int          @id @default(autoincrement())
   name      String
@@ -72,6 +63,7 @@ model Role {
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
   users              User[]
+  userDepartments    UserDepartment[]
 }
 
 
@@ -83,11 +75,29 @@ model Department {
   createdAt    DateTime              @default(now())
   updatedAt    DateTime              @updatedAt
   pricing      Float
+  headId       Int?
   users        User[]
   students     StudentOnDepartment[]
   hours        WorkHours[]
   scholarshipPayroll ScholarshipPayroll[]
   timeEntries  TimeEntry[]
+  userRoles    UserDepartment[]
+  head         User?                 @relation("DepartmentHead", fields: [headId], references: [id])
+  prices       DepartmentPrice[]
+}
+
+model DepartmentPrice {
+  id           Int        @id @default(autoincrement())
+  departmentId Int
+  label        String
+  price        Float
+  active       Boolean    @default(true)
+  createdAt    DateTime   @default(now())
+  updatedAt   DateTime    @updatedAt
+  department   Department @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  workHours    WorkHours[]
+
+  @@index([departmentId])
 }
 
 model User {
@@ -105,6 +115,24 @@ model User {
   workHours    WorkHours[]
   scholarshipPayroll ScholarshipPayroll[]
   timeEntries  TimeEntry[]
+  headedDepartments Department[] @relation("DepartmentHead")
+  departmentRoles UserDepartment[]
+}
+
+model UserDepartment {
+  id           Int         @id @default(autoincrement())
+  userId       Int
+  departmentId Int
+  roleId       Int
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+  user         User        @relation(fields: [userId], references: [id])
+  department   Department  @relation(fields: [departmentId], references: [id])
+  role         Role        @relation(fields: [roleId], references: [id])
+
+  @@unique([userId, departmentId])
+  @@index([departmentId])
+  @@index([roleId])
 }
 
 model StudentOnDepartment {
@@ -142,9 +170,11 @@ model WorkHours {
   price         Float
   total         Float
   status        WorkHoursStatus @default(PENDING)
+  isAdditional  Boolean         @default(false)
   registedBy    Int
   studentId     Int
   departmentId  Int
+  priceId       Int?
   appliedHourId Int?
   periodId      Int
   createdAt     DateTime        @default(now())
@@ -153,6 +183,7 @@ model WorkHours {
   applier       User            @relation(fields: [registedBy], references: [id])
   student       Student         @relation(fields: [studentId], references: [id])
   department    Department      @relation(fields: [departmentId], references: [id])
+  priceRef      DepartmentPrice? @relation(fields: [priceId], references: [id])
   becaPayroll  ScholarshipPayroll?   @relation(fields: [appliedHourId], references: [id])
 }
 

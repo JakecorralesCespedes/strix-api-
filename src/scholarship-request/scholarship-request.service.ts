@@ -7,23 +7,45 @@ import { CreateScholarshipRequestDto } from './dto/create-scholarship-request.dt
 import { UpdateScholarshipRequestDto } from './dto/update-scholarship-request.dto';
 import { GetScholarshipRequestDto } from './dto/get-scholarship-request.dto';
 import { PrismaService } from '../common/prisma.service';
-import { StudentOnDepartment } from '@prisma/client';
+import { RequestStatus, StudentOnDepartment } from '@prisma/client';
+import { SCHOLARSHIP_REQUESTS } from '../permissions/permissions';
 import {
   PaginatedResponse,
   createPaginatedResponse,
   createPaginationMetadata,
 } from '../utils/pagination.util';
+import { MailerService, NOTIFICATION_KEYS } from '../common/mailer.service';
 
 @Injectable()
 export class ScholarshipRequestService {
-  constructor(private readonly prismaService: PrismaService) {}
+  constructor(
+    private readonly prismaService: PrismaService,
+    private readonly mailerService: MailerService,
+  ) {}
+
+  private getAllowedDepartmentIds(user: any): number[] {
+    if (user?.role?.name === 'Admin') {
+      return [];
+    }
+
+    const allowed = (user?.departmentRoles ?? []).map(
+      (item) => item.departmentId,
+    );
+    if (!allowed.length && user?.departmentId) {
+      allowed.push(user.departmentId);
+    }
+
+    return allowed;
+  }
 
   private async checkDepartmentAccess(departmentId: number, user: any) {
     if (user.role.name === 'Admin') return;
 
-    if (user.departmentId !== departmentId) {
+    const allowedDepartmentIds = this.getAllowedDepartmentIds(user);
+
+    if (!allowedDepartmentIds.includes(departmentId)) {
       throw new BadRequestException(
-        `You can only manage scholarship requests for department ${user.departmentId}`,
+        `You can only manage scholarship requests for departments ${allowedDepartmentIds.join(', ')}`,
       );
     }
   }
@@ -42,18 +64,67 @@ export class ScholarshipRequestService {
     if (!departament) {
       throw new BadRequestException('Department not found');
     }
-    const student = await this.prismaService.student.findUnique({
-      where: {
-        id: data.studentId,
-      },
+
+    // Resolver el estudiante: por studentId, o por upsert desde (code/email/name)
+    let studentId = data.studentId;
+
+    if (!studentId) {
+      if (!data.code || !data.name || !data.email) {
+        throw new BadRequestException(
+          'Debes proporcionar studentId o los datos del estudiante (name, email, code)',
+        );
+      }
+
+      // Buscar por codigo (carnet) o por email; si existe, reutilizar y actualizar datos
+      const existingStudent = await this.prismaService.student.findFirst({
+        where: {
+          OR: [{ code: data.code }, { email: data.email }],
+        },
+      });
+
+      if (existingStudent) {
+        const updatedStudent = await this.prismaService.student.update({
+          where: { id: existingStudent.id },
+          data: {
+            name: data.name,
+            email: data.email,
+            phone: data.phone ?? existingStudent.phone,
+            code: data.code,
+          },
+        });
+        studentId = updatedStudent.id;
+      } else {
+        const createdStudent = await this.prismaService.student.create({
+          data: {
+            name: data.name,
+            email: data.email,
+            phone: data.phone ?? '',
+            code: data.code,
+          },
+        });
+        studentId = createdStudent.id;
+      }
+    } else {
+      const student = await this.prismaService.student.findUnique({
+        where: { id: studentId },
+      });
+      if (!student) {
+        throw new BadRequestException('Student not found');
+      }
+    }
+
+    const existing = await this.prismaService.studentOnDepartment.findFirst({
+      where: { studentId, departmentId: data.departmentId },
     });
-    if (!student) {
-      throw new BadRequestException('Student not found');
+    if (existing) {
+      throw new BadRequestException(
+        'Ya existe una solicitud para este estudiante en este departamento',
+      );
     }
 
     return this.prismaService.studentOnDepartment.create({
       data: {
-        status: data.status,
+        status: RequestStatus.PENDING,
         department: {
           connect: {
             id: data.departmentId,
@@ -61,9 +132,13 @@ export class ScholarshipRequestService {
         },
         student: {
           connect: {
-            id: data.studentId,
+            id: studentId,
           },
         },
+      },
+      include: {
+        student: true,
+        department: true,
       },
     });
   }
@@ -78,7 +153,10 @@ export class ScholarshipRequestService {
     // Build where clause: non-admins only see their department
     const where: any = {};
     if (user.role.name !== 'Admin') {
-      where.departmentId = user.departmentId;
+      const allowedDepartmentIds = this.getAllowedDepartmentIds(user);
+      where.departmentId = {
+        in: allowedDepartmentIds.length ? allowedDepartmentIds : [-1],
+      };
     }
 
     if (departmentId) {
@@ -126,10 +204,13 @@ export class ScholarshipRequestService {
     }
 
     // Verify user has access to this department
-    if (user.role.name !== 'Admin' && record.departmentId !== user.departmentId) {
-      throw new BadRequestException(
-        'You do not have access to this scholarship request',
-      );
+    if (user.role.name !== 'Admin') {
+      const allowedDepartmentIds = this.getAllowedDepartmentIds(user);
+      if (!allowedDepartmentIds.includes(record.departmentId)) {
+        throw new BadRequestException(
+          'You do not have access to this scholarship request',
+        );
+      }
     }
 
     return record;
@@ -143,13 +224,99 @@ export class ScholarshipRequestService {
     const record = await this.findOne(id, user);
     await this.checkDepartmentAccess(record.departmentId, user);
 
-    return this.prismaService.studentOnDepartment.update({
+    const nextDepartmentId = data.departmentId ?? record.departmentId;
+    if (nextDepartmentId !== record.departmentId) {
+      await this.checkDepartmentAccess(nextDepartmentId, user);
+    }
+
+    const previousStatus = record.status;
+
+    const updated = await this.prismaService.studentOnDepartment.update({
       where: {
         id,
       },
       data: {
         status: data.status,
+        departmentId: nextDepartmentId,
       },
     });
+
+    if (data.status && data.status !== previousStatus) {
+      const studentEmail = record.student?.email;
+      const notificationKey =
+        data.status === 'APPROVED'
+          ? NOTIFICATION_KEYS.SCHOLARSHIP_APPROVED
+          : data.status === 'REJECTED'
+            ? NOTIFICATION_KEYS.SCHOLARSHIP_REJECTED
+            : null;
+
+      const isEnabled = notificationKey
+        ? await this.mailerService.isNotificationEnabled(notificationKey)
+        : false;
+
+      if (studentEmail && isEnabled) {
+        const readableStatus =
+          data.status === 'APPROVED'
+            ? 'APROBADA'
+            : data.status === 'REJECTED'
+              ? 'RECHAZADA'
+              : 'EN REVISION';
+        const subject = `Tu solicitud de horas beca fue ${readableStatus}`;
+        const departmentName =
+          record.department?.name ?? `#${record.departmentId}`;
+        const studentName = record.student?.name ?? 'estudiante';
+        const bodyLine =
+          data.status === 'APPROVED'
+            ? 'Ya puedes comenzar a reportar tus horas a traves del jefe de departamento.'
+            : data.status === 'REJECTED'
+              ? 'Si crees que fue un error, contacta al departamento responsable.'
+              : '';
+
+        const text = [
+          `Hola ${studentName},`,
+          '',
+          `Te informamos que tu solicitud de horas beca para el departamento "${departmentName}" fue ${readableStatus}.`,
+          '',
+          bodyLine,
+          '',
+          'Sistema Strix - Gestion de Horas Beca',
+        ]
+          .filter(Boolean)
+          .join('\n');
+
+        const accentColor =
+          data.status === 'APPROVED'
+            ? '#047857'
+            : data.status === 'REJECTED'
+              ? '#b91c1c'
+              : '#1d4ed8';
+        const html = `
+          <div style="font-family:Helvetica,Arial,sans-serif;color:#111827;max-width:560px;margin:auto;">
+            <h2 style="color:${accentColor};margin-bottom:4px;">Solicitud ${readableStatus}</h2>
+            <p>Hola <strong>${escapeHtml(studentName)}</strong>,</p>
+            <p>Tu solicitud de horas beca para el departamento <strong>${escapeHtml(departmentName)}</strong> fue <span style="color:${accentColor};font-weight:600;">${readableStatus}</span>.</p>
+            ${bodyLine ? `<p>${escapeHtml(bodyLine)}</p>` : ''}
+            <p style="margin-top:20px;color:#6b7280;font-size:12px;">Sistema Strix - Gestion de Horas Beca</p>
+          </div>`;
+
+        await this.mailerService.sendMail({
+          to: studentEmail,
+          subject,
+          text,
+          html,
+        });
+      }
+    }
+
+    return updated;
   }
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }

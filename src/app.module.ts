@@ -11,7 +11,6 @@ import { CommonModule } from './common/common.module';
 import { RolesModule } from './roles/roles.module';
 import { PeriodsModule } from './periods/periods.module';
 import { DepartamentsModule } from './departaments/departaments.module';
-import { MailingListModule } from './mailing-list/mailing-list.module';
 import { GlobalConfigsModule } from './global-configs/global-configs.module';
 import { StudentsModule } from './students/students.module';
 import { AuthMiddleware } from './auth/auth.middleware';
@@ -19,7 +18,9 @@ import { PermissionsModule } from './permissions/permissions.module';
 import { ScholarshipRequestModule } from './scholarship-request/scholarship-request.module';
 import { PriceModule } from './price/price.module';
 import { WorkHoursModule } from './work-hours/work-hours.module';
-import { TimeEntriesModule } from './time-entries/time-entries.module';
+import { ScholarshipPayrollModule } from './scholarship-payroll/scholarship-payroll.module';
+import { DepartmentPricesModule } from './department-prices/department-prices.module';
+import { AuthModule } from './auth/auth.module';
 
 @Module({
   imports: [
@@ -29,13 +30,14 @@ import { TimeEntriesModule } from './time-entries/time-entries.module';
     PeriodsModule,
     DepartamentsModule,
     GlobalConfigsModule,
-    MailingListModule,
     StudentsModule,
     PermissionsModule,
     ScholarshipRequestModule,
     PriceModule,
     WorkHoursModule,
-    TimeEntriesModule,
+    ScholarshipPayrollModule,
+    DepartmentPricesModule,
+    AuthModule,
   ],
   controllers: [AppController],
   providers: [AppService],
@@ -48,6 +50,10 @@ export class AppModule implements NestModule {
         {
           path: '/health',
           method: RequestMethod.GET,
+        },
+        {
+          path: '/auth/forgot-password',
+          method: RequestMethod.POST,
         },
         {
           path: '/doc',
