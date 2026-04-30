@@ -170,6 +170,7 @@ model WorkHours {
   price         Float
   total         Float
   status        WorkHoursStatus @default(PENDING)
+  rejectionReason String?
   isAdditional  Boolean         @default(false)
   registedBy    Int
   studentId     Int

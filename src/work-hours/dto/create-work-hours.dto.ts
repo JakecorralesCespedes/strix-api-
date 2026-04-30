@@ -51,4 +51,9 @@ export class CreateWorkHoursDto {
   @IsOptional()
   @IsBoolean()
   isAdditional?: boolean;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  rejectionReason?: string;
 }

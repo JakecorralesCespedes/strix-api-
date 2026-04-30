@@ -87,6 +87,14 @@ export class WorkHoursService {
     return this.hasPermission(user, WORK_HOURS.WORK_HOURS_APPROVE, departmentId);
   }
 
+  private canEditApproved(user: any, departmentId?: number): boolean {
+    return this.hasPermission(
+      user,
+      WORK_HOURS.WORK_HOURS_EDIT_APPROVED,
+      departmentId,
+    );
+  }
+
   private canViewFinancials(user: any, departmentId?: number): boolean {
     return this.hasPermission(
       user,
@@ -384,6 +392,34 @@ export class WorkHoursService {
 
     await this.checkDepartmentAccess(nextDepartmentId, user);
 
+    // Si la hora ya estaba APROBADA, solo usuarios con permiso especial
+    // (work-hours.edit-approved) pueden modificarla. Esto bloquea al jefe
+    // común para evitar cambios después de aprobar.
+    if (existing.status === WorkHoursStatus.APPROVED) {
+      const editingApprovedToOther =
+        data.status && data.status !== WorkHoursStatus.APPROVED;
+      const editingFields =
+        data.start !== undefined ||
+        data.end !== undefined ||
+        data.amount !== undefined ||
+        data.price !== undefined ||
+        data.priceId !== undefined ||
+        data.studentId !== undefined ||
+        data.departmentId !== undefined ||
+        data.periodId !== undefined ||
+        data.name !== undefined ||
+        data.isAdditional !== undefined;
+
+      if (
+        (editingApprovedToOther || editingFields) &&
+        !this.canEditApproved(user, nextDepartmentId)
+      ) {
+        throw new BadRequestException(
+          'Esta hora ya fue aprobada. Solo un usuario con permiso work-hours.edit-approved puede modificarla.',
+        );
+      }
+    }
+
     const isAdditional = data.isAdditional ?? existing.isAdditional;
 
     if (!isAdditional && (data.studentId || data.departmentId)) {
@@ -417,9 +453,27 @@ export class WorkHoursService {
       department.pricing,
     );
     const total = amount * resolved.price;
-    const status = this.canApprove(user, nextDepartmentId)
+    const canApprove = this.canApprove(user, nextDepartmentId);
+    const status = canApprove
       ? data.status ?? existing.status
       : existing.status;
+
+    let rejectionReason = existing.rejectionReason ?? null;
+    if (canApprove) {
+      if (data.status === WorkHoursStatus.REJECTED) {
+        const reason = data.rejectionReason?.trim();
+        if (!reason && !rejectionReason) {
+          throw new BadRequestException(
+            'Debe indicar el motivo del rechazo.',
+          );
+        }
+        rejectionReason = reason || rejectionReason;
+      } else if (data.status) {
+        rejectionReason = null;
+      } else if (data.rejectionReason && status === WorkHoursStatus.REJECTED) {
+        rejectionReason = data.rejectionReason.trim();
+      }
+    }
 
     const updated = await this.prismaService.workHours.update({
       where: { id },
@@ -431,6 +485,7 @@ export class WorkHoursService {
         price: resolved.price,
         total,
         status,
+        rejectionReason,
         isAdditional,
         studentId: data.studentId ?? existing.studentId,
         departmentId: nextDepartmentId,
