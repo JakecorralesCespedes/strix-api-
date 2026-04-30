@@ -14,7 +14,7 @@ import {
   createPaginationMetadata,
 } from '../utils/pagination.util';
 import { GetPeriodDto } from './dto/get-period.dto';
-import { MailerService } from '../common/mailer.service';
+import { MailerService, NOTIFICATION_KEYS } from '../common/mailer.service';
 import { PdfReportService } from '../common/pdf-report.service';
 
 const DATE_FORMATTER = new Intl.DateTimeFormat('es-CR', {
@@ -79,22 +79,71 @@ export class PeriodsService {
     });
   }
 
-  updatePeriod(id: number, data: UpdatePeriodDto): Promise<Period> {
+  async updatePeriod(id: number, data: UpdatePeriodDto): Promise<Period> {
+    const existing = await this.prismaService.period.findUnique({
+      where: { id },
+    });
+    if (!existing) {
+      throw new BadRequestException('Period not found');
+    }
+    const updateData: {
+      name?: string;
+      start?: Date;
+      end?: Date;
+      status?: PeriodStatus;
+    } = {
+      name: data.name,
+      start: data.start ? new Date(data.start) : undefined,
+      end: data.end ? new Date(data.end) : undefined,
+    };
+    if (data.status) {
+      updateData.status = data.status as PeriodStatus;
+    }
     return this.prismaService.period.update({
-      where: {
-        id,
-      },
-      data: {
-        name: data.name,
-        start: data.start ? new Date(data.start) : undefined,
-        end: data.end ? new Date(data.end) : undefined,
-      },
+      where: { id },
+      data: updateData,
     });
   }
 
-  async closePeriod(
+  async reopenPeriod(
     id: number,
-  ): Promise<{ period: Period; emailsSent: number; emailsSkipped: number }> {
+    nextStatus: PeriodStatus = PeriodStatus.ACTIVE,
+  ): Promise<Period> {
+    const period = await this.prismaService.period.findUnique({
+      where: { id },
+    });
+    if (!period) {
+      throw new BadRequestException('Period not found');
+    }
+    if (period.status !== PeriodStatus.CLOSED) {
+      throw new BadRequestException('Solo se pueden reabrir periodos cerrados');
+    }
+    if (
+      nextStatus !== PeriodStatus.ACTIVE &&
+      nextStatus !== PeriodStatus.FINISHED &&
+      nextStatus !== PeriodStatus.PENDING
+    ) {
+      throw new BadRequestException(
+        'Estado destino inválido al reabrir el periodo',
+      );
+    }
+    return this.prismaService.period.update({
+      where: { id },
+      data: { status: nextStatus },
+    });
+  }
+
+  async closePeriod(id: number): Promise<{
+    period: Period;
+    emailsSent: number;
+    emailsSkipped: number;
+    approvedCount: number;
+    pendingCount: number;
+    rejectedCount: number;
+    smtpConfigured: boolean;
+    notificationsEnabled: boolean;
+    reason?: string;
+  }> {
     const period = await this.prismaService.period.findUnique({
       where: { id },
     });
@@ -104,7 +153,7 @@ export class PeriodsService {
     }
 
     if (period.status === PeriodStatus.CLOSED) {
-      throw new BadRequestException('El periodo ya esta cerrado');
+      throw new BadRequestException('El periodo ya está cerrado');
     }
 
     const closed = await this.prismaService.period.update({
@@ -112,14 +161,54 @@ export class PeriodsService {
       data: { status: PeriodStatus.CLOSED },
     });
 
-    const summary = { emailsSent: 0, emailsSkipped: 0 };
+    const summary = {
+      emailsSent: 0,
+      emailsSkipped: 0,
+      approvedCount: 0,
+      pendingCount: 0,
+      rejectedCount: 0,
+      smtpConfigured: this.mailerService.isConfigured(),
+      notificationsEnabled: true as boolean,
+      reason: undefined as string | undefined,
+    };
 
     try {
-      const approvedHours = await this.prismaService.workHours.findMany({
-        where: { periodId: id, status: WorkHoursStatus.APPROVED },
-        include: { student: true, department: true },
-        orderBy: { start: 'asc' },
-      });
+      const [approvedHours, pendingCount, rejectedCount] = await Promise.all([
+        this.prismaService.workHours.findMany({
+          where: { periodId: id, status: WorkHoursStatus.APPROVED },
+          include: { student: true, department: true },
+          orderBy: { start: 'asc' },
+        }),
+        this.prismaService.workHours.count({
+          where: { periodId: id, status: WorkHoursStatus.PENDING },
+        }),
+        this.prismaService.workHours.count({
+          where: { periodId: id, status: WorkHoursStatus.REJECTED },
+        }),
+      ]);
+
+      summary.approvedCount = approvedHours.length;
+      summary.pendingCount = pendingCount;
+      summary.rejectedCount = rejectedCount;
+
+      summary.notificationsEnabled =
+        await this.mailerService.isNotificationEnabled(
+          NOTIFICATION_KEYS.WORK_HOURS_APPROVED,
+        );
+
+      if (!summary.smtpConfigured) {
+        summary.reason = 'El servicio SMTP no está configurado.';
+      } else if (!summary.notificationsEnabled) {
+        summary.reason =
+          'Las notificaciones de horas aprobadas están desactivadas.';
+      } else if (!approvedHours.length) {
+        summary.reason =
+          'No hay horas aprobadas en este periodo para enviar reportes.';
+      }
+
+      if (summary.reason) {
+        return { period: closed, ...summary };
+      }
 
       const byStudentAndDepartment = new Map<
         string,

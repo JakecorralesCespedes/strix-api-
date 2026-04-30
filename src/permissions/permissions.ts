@@ -16,6 +16,7 @@ export enum PERIODS {
   PERIODS_READ = 'periods.read',
   PERIODS_WRITE = 'periods.write',
   PERIODS_DELETE = 'periods.delete',
+  PERIODS_REOPEN = 'periods.reopen',
 }
 export enum ROLES {
   ROLES_READ = 'roles.read',
@@ -54,6 +55,7 @@ export enum WORK_HOURS {
   WORK_HOURS_APPROVE = 'work-hours.approve',
   WORK_HOURS_FINANCIALS_READ = 'work-hours.financials.read',
   WORK_HOURS_APPLY = 'work-hours.apply',
+  WORK_HOURS_EDIT_APPROVED = 'work-hours.edit-approved',
 }
 
 export enum REPORTS {

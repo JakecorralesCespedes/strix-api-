@@ -18,6 +18,7 @@ const ADMIN_PERMISSIONS = [
   'departments.write',
   'periods.read',
   'periods.write',
+  'periods.reopen',
   'configs.read',
   'configs.write',
   'roles.read',
@@ -33,6 +34,7 @@ const ADMIN_PERMISSIONS = [
   'work-hours.approve',
   'work-hours.financials.read',
   'work-hours.apply',
+  'work-hours.edit-approved',
   'reports.read',
 ];
 
